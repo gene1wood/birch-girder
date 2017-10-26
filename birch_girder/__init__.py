@@ -718,20 +718,42 @@ class EventHandler:
 
         message = json.loads(self.event['Records'][0]['Sns']['Message'])
         mention = '@%s' % self.config['github_username']
-        if ('action' not in message
-            or message['action'] != 'created'
-            or 'comment' not in message
-            or 'issue' not in message
-            or message['issue']['user']['login'] != self.config[
-                'github_username']
-            or message['comment']['user']['login'] == self.config[
-                'github_username']
-            or mention not in message['comment']['body']):
-            # not a conforming message
-            logger.info(
-                "Received a GitHub event notification but it was not a "
-                "conforming message so we're ignoring it.")
+        if 'action' not in message:
+            logger.info('action key missing from SNS message : %s' % self.event['Records'][0]['Sns']['Message'])
             return False
+        if message['action'] != 'created':
+            logger.info('GitHub action in SNS message was "%s" so it will be ignored' % message['action'])
+            return False
+        if 'comment' not in message:
+            logger.info('comment key missing from SNS message : %s' % self.event['Records'][0]['Sns']['Message'])
+            return False
+        if 'issue' not in message:
+            logger.info('issue key missing from SNS message : %s' % self.event['Records'][0]['Sns']['Message'])
+            return False
+        if message['issue']['user']['login'] != self.config['github_username']:
+            logger.info('GitHub issue was not created by %s so it will be ignored' % self.config['github_username'])
+            return False
+        if message['comment']['user']['login'] == self.config['github_username']:
+            logger.info('GitHub issue comment was made by %s so it will be ignored' % self.config['github_username'])
+            return False
+        if mention not in message['comment']['body']:
+            logger.info('GitHub issue comment does not contain "%s" so it will be ignored' % mention)
+            return False
+
+        # if ('action' not in message
+        #     or message['action'] != 'created'
+        #     or 'comment' not in message
+        #     or 'issue' not in message
+        #     or message['issue']['user']['login'] != self.config[
+        #         'github_username']
+        #     or message['comment']['user']['login'] == self.config[
+        #         'github_username']
+        #     or mention not in message['comment']['body']):
+        #     # not a conforming message
+        #     logger.info(
+        #         "Received a GitHub event notification but it was not a "
+        #         "conforming message so we're ignoring it.")
+        #     return False
 
         # Read the hidden content
         data = parse_hidden_content(message['issue']['body'])
