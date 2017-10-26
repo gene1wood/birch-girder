@@ -35,7 +35,7 @@ Publish package to AWS Lambda
     export AWS_DEFAULT_PROFILE="myprofilename"
     export AWS_DEFAULT_REGION="us-west-2"
     export AWS_ACCOUNT_ID="0123456789012"
-    aws lambda create-function --function-name birch-girder --runtime python2.7 --timeout 30 --role arn:aws:iam::$AWS_ACCOUNT_ID:role/birch-girder --handler __init__.lambda_handler --zip-file fileb://birch-girder.zip
+    aws lambda create-function --function-name birch-girder --runtime python2.7 --timeout 30 --role arn:aws:iam::$AWS_ACCOUNT_ID:role/birch-girder --handler __init__.lambda_handler --zip-file fileb://artifacts/birch-girder.zip
 
 There are lambda add-permissions steps needed here which are done by
 manage.py to grant SES rights to invoke this function.
@@ -47,15 +47,15 @@ If you want to extend or modify the monitor you can update the running
 code like this
 
     # Update the file in the zip archive 
-    zip --junk-paths birch-girder.zip birch_girder/__init__.py
+    zip --junk-paths artifacts/birch-girder.zip birch_girder/__init__.py
 
     # Upload the new zip file
-    aws lambda update-function-code --function-name birch-girder --zip-file fileb://birch-girder.zip
+    aws lambda update-function-code --function-name birch-girder --zip-file fileb://artifacts/birch-girder.zip
 
 If you want to change your configuration
 
     # Update the file in the zip archive 
-    zip --junk-paths birch-girder.zip birch_girder/config.yaml
+    zip --junk-paths artifacts/birch-girder.zip birch_girder/config.yaml
 
     # Upload the new zip file
-    aws lambda update-function-code --function-name birch-girder --zip-file fileb://birch-girder.zip
+    aws lambda update-function-code --function-name birch-girder --zip-file fileb://artifacts/birch-girder.zip

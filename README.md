@@ -123,8 +123,8 @@ a mix of manual steps and commands run with the `manage.py` tool
 * An S3 bucket lifecycle policy to automatically delete email payloads from the
   bucket after a few days.
   * `manage.py:create_s3_bucket()`
-* A GitHub repository that you want to have the AWS SES GitHub Connector create
-  issues in. # TODO : replace this repo with a new one that's empty but with the same name
+* A GitHub repository that you want to have Birch Girder create
+  issues in.
 * A DNS zone or name created at which email will be received
 * An IAM Role to be used by the birch_girder lambda function. 
   * `manage.py:create_iam_role(config, iam_rolename)`
