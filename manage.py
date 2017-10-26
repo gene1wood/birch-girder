@@ -283,7 +283,7 @@ def edit_github_webhook(config, repo_owner, repo_name):
     # https://stackoverflow.com/a/43522648/168874
     gh = login(token=config['github_webhook_editor_token'])
     repo = gh.repository(repo_owner, repo_name)
-    for hook in repo.hooks():
+    for hook in repo.iter_hooks():
         if hook.name == u'amazonsns':
             result = hook.edit(events=[u'issue_comment'])
 
