@@ -1,30 +1,12 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
 import boto3
 import yaml
 from github3 import authorize
-from getpass import getuser, getpass
+from getpass import getpass
 import argparse
 from github3 import login  # https://github3py.readthedocs.io/en/master/
-
-CONFIG = '''---
-sns_topic_arn: arn:aws:sns:us-west-2:123456789012:GithubIssueCommentWebhookTopic
-sns_region: us-west-2
-github_token: 0123456789abcdef0123456789abcdef01234567
-github_username: hubot
-github_owner: octocat
-github_repo: Spoon-Knife
-ses_payload_s3_bucket_name: examplebucket
-ses_payload_s3_prefix: ses-payloads/
-alert_sns_region: us-west-2
-alert_sns_topic_arn: arn:aws:sns:us-west-2:123456789012:BirchGirderAlerts
-provider_name: Example Corp
-recipient_list:
-  support@example.com:
-    label: Support
-    name: Example-Corp-Support
-  billing@example.com:
-    label: Billing
-    name: Example-Corp-Billing
-'''
 
 try:
     # Python 2
@@ -34,14 +16,17 @@ except NameError:
     prompt = input
 
 
-def grant_lambda_policy_permissions(config, lambda_function_arn, topic):
+def grant_lambda_policy_permissions(config, lambda_function_arn):
+    topic = config['sns_topic_arn']
+    alert_topic = config['alert_sns_topic_arn']
     statement_id = 'GiveSESPermissionToInvokeFunction'
     client = boto3.client('lambda')
     try:
-        response = client.remove_permission(
+        client.remove_permission(
             FunctionName=lambda_function_arn,
             StatementId=statement_id
         )
+        print('%s Lambda permission removed' % statement_id)
     except:
         pass
     response = client.add_permission(
@@ -53,12 +38,14 @@ def grant_lambda_policy_permissions(config, lambda_function_arn, topic):
     )
     print('Permission %s added : %s' % (statement_id, response['Statement']))
 
-    statement_id = 'GiveSNSPermissionToInvokeFunction'
+    statement_id = 'GiveBirchGirderSNSTopicPermissionToInvokeFunction'
     try:
-        response = client.remove_permission(
+        client.remove_permission(
             FunctionName=lambda_function_arn,
             StatementId=statement_id
         )
+        print('%s Lambda permission removed' % statement_id)
+
     except:
         pass
     response = client.add_permission(
@@ -70,26 +57,50 @@ def grant_lambda_policy_permissions(config, lambda_function_arn, topic):
     )
     print('Permission %s added : %s' % (statement_id, response['Statement']))
 
-def setup_ses(config, lambda_function_arn):
-    client = boto3.client('ses')
-    rule_set_name = 'birch-girder-ruleset'
-    response = client.create_receipt_rule_set(
-        RuleSetName=rule_set_name
+    statement_id = 'GiveBirchGirderAlertSNSTopicPermissionToInvokeFunction'
+    try:
+        client.remove_permission(
+            FunctionName=lambda_function_arn,
+            StatementId=statement_id
+        )
+        print('%s Lambda permission removed' % statement_id)
+    except:
+        pass
+    response = client.add_permission(
+        FunctionName=lambda_function_arn,
+        StatementId=statement_id,
+        Action='lambda:InvokeFunction',
+        Principal='sns.amazonaws.com',
+        SourceArn=alert_topic
     )
-    print('SES Rule Set created')
+    print('Permission %s added : %s' % (statement_id, response['Statement']))
 
-    # http://boto3.readthedocs.io/en/latest/reference/services/ses.html#SES.Client.create_receipt_rule
-    response = client.create_receipt_rule(
+
+def setup_ses(config,
+              lambda_function_arn,
+              rule_name,
+              rule_set_name='birch-girder-ruleset'):
+    client = boto3.client('ses')
+    try:
+        response = client.describe_receipt_rule_set(RuleSetName=rule_set_name)
+        print('SES Rule set %s already exists' % response['Metadata']['Name'])
+    except:
+        client.create_receipt_rule_set(
+            RuleSetName=rule_set_name
+        )
+        print('SES Rule Set %s created' % rule_set_name)
+
+    client.create_receipt_rule(
         RuleSetName=rule_set_name,
         Rule={
-            'Name': 'birch-girder-rule',
+            'Name': rule_name,
             'Enabled': True,
             'Recipients': config['recipient_list'].keys(),
             'Actions': [
                 {
                     'S3Action': {
                         'BucketName': config['ses_payload_s3_bucket_name'],
-                        'ObjectKeyPrefix': 'ses-payloads'
+                        'ObjectKeyPrefix': config['ses_payload_s3_prefix']
                     }
                 },
                 {
@@ -102,11 +113,11 @@ def setup_ses(config, lambda_function_arn):
             'ScanEnabled': True
         }
     )
-    print('SES Rule created in Rule Set')
-    response = client.set_active_receipt_rule_set(
+    print('SES Rule %s created in Rule Set' % rule_name)
+    client.set_active_receipt_rule_set(
         RuleSetName=rule_set_name
     )
-    print('SES Rule Set set as active')
+    print('SES Rule Set %s set as active' % rule_set_name)
 
 
 def get_two_factor_code():
@@ -131,12 +142,21 @@ def generate_github_token():
         user, password, scopes, note, note_url,
         two_factor_callback=get_two_factor_code)
 
-    print("GitHub OAuth Token : %s" % auth.token)
+    print("GitHub OAuth Token (github_token) : %s" % auth.token)
     print("GitHub OAuth ID : %s" % auth.id)
 
 
-def create_github_iam_user(
-        sns_topic_arn, iam_username='github-sns-publisher'):
+def create_github_repo(config):
+    gh = login(token=config['github_token'])
+    repo = gh.create_repo(
+        name=config['github_repo'],
+        private=True,
+        auto_init=True
+    )
+    print("Created GitHub repo %s" % repo.html_url)
+
+
+def create_github_iam_user(config, iam_username='github-sns-publisher'):
     policy_document = '''{
     "Version": "2012-10-17",
     "Statement": [
@@ -151,16 +171,19 @@ def create_github_iam_user(
             "Effect": "Allow"
         }
     ]
-}''' % sns_topic_arn
+}''' % config['sns_topic_arn']
     client = boto3.client('iam')
     response = client.create_user(
         UserName=iam_username
     )
-    response = client.put_user_policy(
+    print('IAM user %s created' % response['User']['UserName'])
+    policy_name = 'PublishToSNSaws-ses-github-connector'
+    client.put_user_policy(
         UserName=iam_username,
-        PolicyName='PublishToSNSaws-ses-github-connector',
+        PolicyName=policy_name,
         PolicyDocument=policy_document
     )
+    print('IAM policy %s applied to user %s' % (policy_name, iam_username))
     response = client.create_access_key(
         UserName=iam_username
     )
@@ -168,7 +191,7 @@ def create_github_iam_user(
     print('SecretAccessKey : %s' % response['AccessKey']['SecretAccessKey'])
 
 
-def create_iam_role(config, iam_rolename='birch-girder'):
+def create_iam_role(config, lambda_iam_role_name='birch-girder'):
     policies = {
         'LambdaBasicExecution' : '''{
   "Version": "2012-10-17",
@@ -245,9 +268,9 @@ def create_iam_role(config, iam_rolename='birch-girder'):
   ]
 }'''
     client = boto3.client('iam')
-    print("Creating role %s" % iam_rolename)
+    print("Creating role %s" % lambda_iam_role_name)
     response = client.create_role(
-        RoleName=iam_rolename,
+        RoleName=lambda_iam_role_name,
         AssumeRolePolicyDocument=assume_role_policy_document
         # Description='IAM role assumed by birch-girder lambda '
         #             'function'
@@ -255,23 +278,23 @@ def create_iam_role(config, iam_rolename='birch-girder'):
     for policy_name in policies:
         print("Attaching policy %s" % policy_name)
         response = client.put_role_policy(
-            RoleName=iam_rolename,
+            RoleName=lambda_iam_role_name,
             PolicyName=policy_name,
             PolicyDocument=policies[policy_name]
         )
 
-def create_sns_topic():
+def create_sns_topic(config):
     client = boto3.client('sns')
     response = client.create_topic(
-        Name='GithubIssueCommentWebhookTopic'
+        Name=config['sns_topic_arn'].split(':')[5]
     )
     print('Topic ARN : %s' % response['TopicArn'])
 
 
-def subscribe_lambda_to_sns_topic(topic, lambda_function_arn):
+def subscribe_lambda_to_sns_topic(config, lambda_function_arn):
     client = boto3.client('sns')
     response = client.subscribe(
-        TopicArn=topic,
+        TopicArn=config['sns_topic_arn'],
         Protocol='lambda',
         Endpoint=lambda_function_arn
     )
@@ -279,13 +302,17 @@ def subscribe_lambda_to_sns_topic(topic, lambda_function_arn):
 
 
 
-def edit_github_webhook(config, repo_owner, repo_name):
+def configure_github_webhook(config):
     # https://stackoverflow.com/a/43522648/168874
     gh = login(token=config['github_webhook_editor_token'])
-    repo = gh.repository(repo_owner, repo_name)
+    repo = gh.repository(config['github_owner'], config['github_repo'])
+    events = [u'issue_comment']
     for hook in repo.iter_hooks():
         if hook.name == u'amazonsns':
-            result = hook.edit(events=[u'issue_comment'])
+            result = hook.edit(events=events)
+            print(
+                'GitHub webook "amazonsns" on repo %s configured to trigger on'
+                ' %s' % (repo.html_url, events))
 
 
 def create_s3_bucket(config):
@@ -353,52 +380,63 @@ def deploy_to_lambda():
 
 
 def main():
-    with open('birch_girder/config.yaml') as f:
-        config = yaml.load(f.read())
+    try:
+        with open('birch_girder/config.yaml') as f:
+            config = yaml.load(f.read())
+    except:
+        config = {}
     parser = argparse.ArgumentParser(
         description='Manage Birch Girder')
     parser.add_argument(
         'action',
-        choices=['grant-lambda-policy-permissions',
-                 'create-bucket',
-                 'setup-ses',
-                 'generate-github-token',
-                 'create-sns-topic',
-                 'create-iam-user',
-                 'create-iam-role',
-                 'subscribe-lambda-to-sns',
-                 'configure-github-webhook'],
+        choices=[
+            'generate-github-token',
+            'create-github-repo',
+            'grant-lambda-policy-permissions',
+            'create-bucket',
+            'setup-ses',
+            'create-sns-topic',
+            'create-github-iam-user',
+            'create-lambda-iam-role',
+            'subscribe-lambda-to-sns',
+            'configure-github-webhook'
+        ],
         help='the action to execute')
-    parser.add_argument('--sns-topic-arn',
-                        help='ARN of the SNS Topic that was created')
     parser.add_argument('--lambda-function-arn',
                         help='ARN of the AWS Lambda function that has been '
                              'created')
-    parser.add_argument('--repo-owner',
-                        help='GitHub username of the repo owner')
-    parser.add_argument('--repo-name',
-                        help='GitHub name of the repo')
+    parser.add_argument('--lambda-iam-role-name', default='birch-girder',
+                        help='Name of the IAM role to be used by Lambda '
+                             '(default: birch-girder)')
+    parser.add_argument('--ses-rule-name', default='birch-girder-rule',
+                        help='Name of the SES rule to create '
+                             '(default: birch-girder-rule)')
+    parser.add_argument('--github-iam-username', default='github-sns-publisher',
+                        help='Name of the IAM user to be used by GitHub '
+                             '(default: github-sns-publisher)')
     args = parser.parse_args()
 
-
-
-    if args.action == 'grant-lambda-policy-permissions':
-        grant_lambda_policy_permissions(config, args.lambda_function_arn, args.sns_topic_arn)
+    if args.action == 'generate-github-token':
+        generate_github_token()
+    elif args.action == 'create-github-repo':
+        create_github_repo(config)
+    elif args.action == 'grant-lambda-policy-permissions':
+        grant_lambda_policy_permissions(config, args.lambda_function_arn)
     elif args.action == 'create-bucket':
         create_s3_bucket(config)
     elif args.action == 'setup-ses':
-        setup_ses(config, args.lambda_function_arn)
-    elif args.action == 'generate-github-token':
-        generate_github_token()
+        setup_ses(config, args.lambda_function_arn, args.ses_rule_name)
     elif args.action == 'create-sns-topic':
-        create_sns_topic()
-    elif args.action == 'create-iam-user':
-        create_github_iam_user(args.sns_topic_arn)
-    elif args.action == 'create-iam-role':
-        create_iam_role(config)
-    elif args.action == 'subscribe-lambda-to-sns':
-        subscribe_lambda_to_sns_topic(args.sns_topic_arn, args.lambda_function_arn)
+        create_sns_topic(config)
+    elif args.action == 'create-github-iam-user':
+        create_github_iam_user(config, args.github_iam_username)
+    elif args.action == 'create-lambda-iam-role':
+        create_iam_role(config, args.lambda_iam_role_name)
     elif args.action == 'configure-github-webhook':
-        edit_github_webhook(config, args.repo_owner, args.repo_name)
+        configure_github_webhook(config)
+    elif args.action == 'subscribe-lambda-to-sns':
+        subscribe_lambda_to_sns_topic(config, args.lambda_function_arn)
+
+
 if __name__ == '__main__':
     main()

@@ -114,7 +114,101 @@ in the body of the issue.
 The process to deploy Birch Girder in your GitHub and AWS account is currently
 a mix of manual steps and commands run with the `manage.py` tool
 
+```
+./manage.py generate-github-token
+```
+
+* Add the github_token returned to config.yaml
+* Fill out all remaining fields in config.yaml
+
+```
+./manage.py create-github-repo
+    Created GitHub repo https://github.com/octocat/Spoon-Knife
+./manage.py create-bucket
+    Bucket http://examplebucket.s3.amazonaws.com/ created
+    Bucket policy for examplebucket created
+    Bucket lifecycle configuration for examplebucket applied to bucket
+```
+
+* Verify a DNS domain with Amazon SES
+
+```
+./manage.py create-lambda-iam-role
+    Creating role birch-girder
+    Attaching policy SNSPublisher
+    Attaching policy S3Reader
+    Attaching policy LambdaBasicExecution
+    Attaching policy SESSender
+```
+
+* Zip and deploy AWS Lambda function
+
+```
+./manage.py grant-lambda-policy-permissions --lambda-function-arn arn:aws:lambda:us-west-2:123456789012:function:birch-girder
+    Permission GiveSESPermissionToInvokeFunction added : {"Sid":"GiveSESPermissionToInvokeFunction","Effect":"Allow","Principal":{"Service":"ses.amazonaws.com"},"Action":"lambda:InvokeFunction","Resource":"arn:aws:lambda:us-west-2:123456789012:function:birch-girder","Condition":{"StringEquals":{"AWS:SourceAccount":"123456789012"}}}
+    Permission GiveBirchGirderSNSTopicPermissionToInvokeFunction added : {"Sid":"GiveBirchGirderSNSTopicPermissionToInvokeFunction","Effect":"Allow","Principal":{"Service":"sns.amazonaws.com"},"Action":"lambda:InvokeFunction","Resource":"arn:aws:lambda:us-west-2:BirchGirderAlerts:function:birch-girder","Condition":{"ArnLike":{"AWS:SourceArn":"arn:aws:sns:us-west-2:123456789012:GithubIssueCommentWebhookTopic"}}}
+    Permission GiveBirchGirderAlertSNSTopicPermissionToInvokeFunction added : {"Sid":"GiveBirchGirderAlertSNSTopicPermissionToInvokeFunction","Effect":"Allow","Principal":{"Service":"sns.amazonaws.com"},"Action":"lambda:InvokeFunction","Resource":"arn:aws:lambda:us-west-2:BirchGirderAlerts:function:birch-girder","Condition":{"ArnLike":{"AWS:SourceArn":"arn:aws:sns:us-west-2:123456789012:BirchGirderAlerts"}}}
+./manage.py setup-ses --lambda-function-arn arn:aws:lambda:us-west-2:123456789012:function:birch-girder
+    SES Rule Set birch-girder-ruleset created
+    SES Rule birch-girder-rule created in Rule Set
+    SES Rule Set birch-girder-ruleset set as active
+./manage.py create-sns-topic
+    Topic ARN : arn:aws:sns:us-west-2:123456789012:GithubIssueCommentWebhookTopic
+./manage.py create-github-iam-user --github-iam-user staging-github-sns-publisher
+    AccessKeyId :  AKIAIOSFODNN7EXAMPLE
+    SecretAccessKey :  wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+```
+
+* Setup the GitHub integration with AWS SNS in the GitHub web UI (instructions below)
+
+```
+./manage.py configure-github-webhook
+    GitHub webook "amazonsns" on repo https://github.com/octocat/Spoon-Knife configured to trigger on [u'issue_comment']
+./manage.py subscribe-lambda-to-sns --lambda-function-arn arn:aws:lambda:us-west-2:123456789012:function:birch-girder
+    Subscription ARN : arn:aws:sns:us-west-2:123456789012:GithubIssueCommentWebhookTopic:e4c5eb60-b40d-4bf2-aa33-07d74ab81856
+```
+
+## Setup config
+
+Create a `config.yaml` file looking like [`example.config.yaml`](https://github.com/gene1wood/birch-girder/tree/master/birch_girder/config.example.yaml)
+
+
+* `sns_topic_arn` : Replace `123456789012` with your AWS account number which
+  you can get by running `aws sts get-caller-identity --output text --query 'Account'`
+* `sns_region` : Choose the [AWS region](http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html#concepts-available-regions)
+  that you want your SNS topic and SES to operate in
+* `github_token` : Generate a GitHub token by running
+  `./manage.py generate-github-token`. Use the GitHub user that you want to
+  comment in GitHub issues
+* `github_username` : The GitHub username of the user you used to create the
+  `github_token`
+* `github_owner` : The GitHub username of the GitHub repo owner
+* `github_repo` : The GitHub repo name
+* `ses_payload_s3_bucket_name` : The name of the S3 bucket to use
+* `ses_payload_s3_prefix` : The directory prefix in the S3 bucket to temporarily
+  put all SES email payloads in
+* `alert_sns_region` : Choose the [AWS region](http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html#concepts-available-regions)
+  that you want your alert SNS topic to run in
+* `alert_sns_topic_arn` : Replace `123456789012` with your AWS account number
+  which you can get by running `aws sts get-caller-identity --output text --query 'Account'`
+* `provider_name` : The name of the service provider that Birch Girder is
+  accepting emails for. This shows up in the footer of emails from Birch Girder
+* `initial_email_reply` : The text in the initial email response Birch Girder
+  sends back to a user when they email a new request that generates a GitHub
+  issue
+* `known_machine_senders` : List of email addresses for which no initial email
+  reply should be sent. These are email addresses of senders that are other
+  ticketing systems or automated (non-human)
+* `recipient_list` : A list of email addresses at which you want to receive
+  inbound emails that will trigger the creation of GitHub issues.
+  * `label` : For each recipient, the [GitHub label](https://help.github.com/articles/about-labels/)
+    to apply to issues generated for that recipient
+  * `name` : The name to put in the `From` field of emails sent back to users
+    from this recipient
+
 ## Setup email received flow
+* A GitHub repository that you want to have Birch Girder create
+  issues in.
 * An S3 bucket to temporarily store the SES email payloads. Configure the bucket
   name in `connector.yaml` in the `ses_payload_s3_bucket_name` field.
   * `manage.py:create_s3_bucket()`
@@ -123,41 +217,49 @@ a mix of manual steps and commands run with the `manage.py` tool
 * An S3 bucket lifecycle policy to automatically delete email payloads from the
   bucket after a few days.
   * `manage.py:create_s3_bucket()`
-* A GitHub repository that you want to have Birch Girder create
-  issues in.
-* A DNS zone or name created at which email will be received
+* A DNS zone or name created at which email will be received. This zone or
+  email address must go through the [SES domain verification process](https://us-west-2.console.aws.amazon.com/ses/home?region=us-west-2#verified-senders-domain:)
+  before use and have the needed `_amazonses.example.com` and
+  `_domainkey.example.com` DNS records created as well as an SPF record 
 * An IAM Role to be used by the birch_girder lambda function. 
-  * `manage.py:create_iam_role(config, iam_rolename)`
+  * `manage.py:create_iam_role(config, lambda_iam_role_name)`
 * A Lambda function containing the birch-girder code
   * `manage.py:deploy_to_lambda()` is not completed yet, instead follow instructions in `docs/build-and-upload-birch-girder.rst`.
 * A Lambda Policy for the Lambda function that  
   [grants SES permission to invoke the function](http://docs.aws.amazon.com/ses/latest/DeveloperGuide/receiving-email-permissions.html)
   and [grants SNS permission to invoke the function](http://docs.aws.amazon.com/lambda/latest/dg/with-sns-create-x-account-permissions.html)
   via Lambda AddPermission calls.
-  * `manage.py:grant_lambda_policy_permissions(config, lambda_function_arn, topic)`
+  * `manage.py:grant_lambda_policy_permissions(config, lambda_function_arn)`
 * An SES receipt rule set containing an SES receipt rule that
   * S3Action to deposit the received email payload in the S3 bucket created above
-  * LambdaAction to trigger the aws-ses-connector lambda function
+  * LambdaAction to trigger the Birch Girder lambda function
   * `manage.py:setup_ses(config, lambda_function_arn)`
 * Activate the SES rule set created
   * `manage.py:setup_ses(config, lambda_function_arn)`
 
 ## Setup issue comment flow
 * An SNS topic to receive notifications from GitHub integration/service.
-  Configure this in `connector.yaml` in the `sns_topic_arn` and `sns_region`
+  Configure this in `config.yaml` in the `sns_topic_arn` and `sns_region`
   fields
   * `manage.py:create_sns_topic()`
 * An IAM user to be used by GitHub to `Publish` notifications to the SNS topic.
   This user needs to have `sns:Publish` permissions on the SNS topic.
-  * `manage.py:create_github_iam_user(sns_topic_arn, iam_username)`
+  * `manage.py:create_github_iam_user(config, iam_username)`
 * An API key pair for the IAM user. This key pair is configured in the GitHub
   integration/service settings
-  * `manage.py:create_github_iam_user(sns_topic_arn, iam_username)`
+  * `manage.py:create_github_iam_user(config, iam_username)`
 * A GitHub integration/service of type "Amazon SNS" configured on that
   repository that tells GitHub to publish a notification to the SNS topic
   you've created each time something happens in that repository.
+  * Browse to your GitHub repo... `Settings`... [`Integrations & services`](https://github.com/iocoop/birch-girder-test-issue-repo/settings/installations)
+  * Click Add Service and search for `Amazon SNS`
+  * Enter the `AccessKeyId` obtained in the create-github-iam-user step into the `Aws key` field
+  * Enter the `sns_topic_arn` from config.yaml into the `Sns topic` field
+  * Enter the `sns_region` from config.yaml into the `Sns region` field
+  * Enter the `SecretAccessKey` obtained in the create-github-iam-user step into the `Aws secret` field
+  * Click `Add Service`
 * An added webhook for the IssueComment event type on the Amazon SNS service
-  * `manage.py:edit_github_webhook(config, repo_owner, repo_name)`
-* An SNS topic subscription, subscribing the aws-ses-github-connector lambda
+  * `manage.py:configure_github_webhook(config, repo_owner, repo_name)`
+* An SNS topic subscription, subscribing the Birch Girder lambda function
   to the SNS topic above
-  * `manage.py:subscribe_lambda_to_sns_topic(topic, lambda_arn)`
+  * `manage.py:subscribe_lambda_to_sns_topic(config, lambda_arn)`
