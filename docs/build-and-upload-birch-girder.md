@@ -29,6 +29,12 @@ Add your config to the zipped virtualenv
 
     zip --junk-paths artifacts/birch-girder.zip birch_girder/config.yaml
 
+Add any plugins
+----------------------------------------
+
+    zip artifacts/birch-girder.zip plugins/example1.py
+    zip artifacts/birch-girder.zip plugins/example2.py
+
 Publish package to AWS Lambda
 -----------------------------
 
