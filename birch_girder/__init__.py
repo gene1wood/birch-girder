@@ -175,6 +175,8 @@ def get_event_type(event):
             # SNS published message
             # Note the upper case 'EventSource'
             return 'sns'
+    elif 'replay-email' in event:
+        return 'replay-email'
     else:
         return False
 
@@ -308,9 +310,6 @@ class Email:
         self.event = event
         self.alerter = alerter
         self.gh = gh
-        if len(event['Records']) > 1:
-            raise Exception(
-                "Multiple records from SES %s" % self.event['Records'])
         self.record = self.event['Records'][0]
         self.raw_subject = (self.record['ses']['mail']
                             ['commonHeaders']['subject'])
@@ -328,6 +327,7 @@ class Email:
         self.stripped_reply = ''
         self.timestamp = 0
         self.new_attachment_urls = {}
+        self.s3 = boto3.client('s3')
         self.parse_email()
 
     def parse_email(self):
@@ -433,15 +433,14 @@ class Email:
 
         :return:
         """
-        s3 = boto3.client('s3')
         bucket = self.config['ses_payload_s3_bucket_name']
         prefix = self.config['ses_payload_s3_prefix']
         key = prefix + self.s3_payload_filename
         logger.debug("Using waiter to wait for %s %s to persist through s3 "
                      "service" % (bucket, key))
-        waiter = s3.get_waiter('object_exists')
+        waiter = self.s3.get_waiter('object_exists')
         waiter.wait(Bucket=bucket, Key=key)
-        response = s3.get_object(Bucket=bucket, Key=key)
+        response = self.s3.get_object(Bucket=bucket, Key=key)
         logger.debug("Fetched s3 object : %s" % response)
         self.raw_body = response['Body'].read()
         # We're not deleting the s3 object as it's taken care of by S3
@@ -501,6 +500,8 @@ class EventHandler:
         self.context = context
         self.alerter = Alerter(self.config, self.event, self.context)
         self.gh = github3.login(token=self.config['github_token'])
+        self.s3 = boto3.client('s3')
+
 
     def update_issue(self, body, message_id, new_attachment_urls):
         """Parse the hidden content from the GitHub issue body, update it to
@@ -554,6 +555,22 @@ class EventHandler:
         )
         return body
 
+    def fetch_replay(self, message_id):
+        """Fetch an event stored in S3 based on message_id and overwrite
+        self.event with the fetched event in order to replay that email again.
+
+        :param str message_id: The message ID of the email to replay
+        :return:
+        """
+        bucket = self.config['ses_payload_s3_bucket_name']
+        prefix = self.config['ses_payload_s3_prefix'] + 'email-events/'
+        key = prefix + message_id
+        response = self.s3.get_object(Bucket=bucket, Key=key)
+        self.event = json.loads(response['Body'].read())
+        logger.info(
+            "Email with message ID %s fetched from S3 and will now be"
+            "replayed" % message_id)
+
     def process_event(self):
         """Determine event type and call the associated processor
 
@@ -565,6 +582,9 @@ class EventHandler:
                 self.incoming_email()
             elif event_type == 'sns':
                 self.github_hook()
+            elif event_type == 'replay-email':
+                self.fetch_replay(self.event['replay-email'])
+                self.incoming_email()
             else:
                 logger.error("Unable to determine message type from event "
                              "%s" % self.event)
@@ -599,6 +619,24 @@ class EventHandler:
         """
         # https://gist.github.com/gene1wood/26fbae0e2388b02d6292
         # https://github3py.readthedocs.io/en/master/examples/oauth.html
+
+        if len(self.event['Records']) > 1:
+            raise Exception(
+                "Multiple records from SES %s" % self.event['Records'])
+
+        bucket = self.config['ses_payload_s3_bucket_name']
+        prefix = self.config['ses_payload_s3_prefix'] + 'email-events/'
+        key = prefix + self.event['Records'][0]['ses']['mail']['messageId']
+
+        response = self.s3.put_object(
+            Body=json.dumps(self.event, indent=2),
+            Bucket=bucket,
+            ContentType='application/json',
+            Key=key
+        )
+
+        logger.debug("Wrote s3 object %s and got etag %s" % (
+            key, response['ETag']))
 
         all_plugins = [
             importlib.import_module('plugins.%s' % os.path.basename(x)[:-3])

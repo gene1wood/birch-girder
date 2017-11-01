@@ -263,3 +263,21 @@ Create a `config.yaml` file looking like [`example.config.yaml`](https://github.
 * An SNS topic subscription, subscribing the Birch Girder lambda function
   to the SNS topic above
   * `manage.py:subscribe_lambda_to_sns_topic(config, lambda_arn)`
+
+# Usage
+
+## How to replay an email
+
+If something goes wrong with Birch Girder or a plugin and you want to replay an
+email you've already received so that it will be processed again and a new
+issue will be created, you can send an event to the lambda function in the
+format below passing the message ID of the email you want to replay.
+
+You may want to rename the existing GitHub issue to avoid conflicts.
+
+
+```json
+{
+  "replay-email": "nvk908umpjst57s3er4or1e4usb7b0pr0vh72jo1"
+}
+```

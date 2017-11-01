@@ -216,7 +216,7 @@ def create_iam_role(config, lambda_iam_role_name='birch-girder'):
         "s3:Get*",
         "s3:List*"
       ],
-      "Resource": "arn:aws:s3:::%(bucket_name)s/*"
+      "Resource": "arn:aws:s3:::%(bucket_name)s/%(prefix)s*"
     },
     {
       "Effect": "Allow",
@@ -226,7 +226,21 @@ def create_iam_role(config, lambda_iam_role_name='birch-girder'):
       "Resource": "arn:aws:s3:::%(bucket_name)s"
     }
   ]
-}''' % {'bucket_name': config['ses_payload_s3_bucket_name']},
+}''' % {'bucket_name': config['ses_payload_s3_bucket_name'],
+        'prefix': config['ses_payload_s3_prefix']},
+        'S3Writer': '''{
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "s3:PutObject*"
+          ],
+          "Resource": "arn:aws:s3:::%(bucket_name)s/%(prefix)semail-events/*"
+        }
+      ]
+    }''' % {'bucket_name': config['ses_payload_s3_bucket_name'],
+            'prefix': config['ses_payload_s3_prefix']},
         'SESSender' : '''{
   "Version": "2012-10-17",
   "Statement": [
