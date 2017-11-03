@@ -19,13 +19,16 @@ from email.mime.text import MIMEText
 import glob
 import os.path
 import importlib
+import pyzmail
 
 TIME_ZONE = tz.gettz('America/Los_Angeles')
 
 # Example "Re: [examplecorp/support] Add myself to user list. (#2)"
-# Example "Re" ": "
+# https://stackoverflow.com/questions/9153629/regex-code-for-removing-fwd-re-etc-from-email-subject/11640925#comment81160171_11640925
 EMAIL_SUBJECT_PREFIX = re.compile(
-    '([\[\(] *)?(RE?S?|FYI|RIF|I|FS|VB|RV|ENC|ODP|PD|YNT|ILT|SV|VS|VL|AW|WG|ΑΠ|ΣΧΕΤ|ΠΡΘ|תגובה|הועבר|主题|转发|FWD?) *([-:;)\]][ :;\])-]*|$)|\]+ *$',
+    '^([[(] *)?(RE?S?|FYI|RIF|I|FS|VB|RV|ENC|ODP|PD|YNT'
+    '|ILT|SV|VS|VL|AW|WG|ΑΠ|ΣΧΕΤ|ΠΡΘ|תגובה|הועבר|主题|转发|FWD?)'
+    ' *([-:;)\]][ :;\])-]*|$)|\]+ *$',
     re.IGNORECASE)
 
 # "[examplecorp/support] Add myself to user list. (#2)"
@@ -275,6 +278,47 @@ def send_email(email_subject, from_name, from_address, to_address,
     return response['MessageId']
 
 
+def clean_sender_address(sender):
+    """Revert rewritten sender email address
+
+    https://stackoverflow.com/a/47103997/168874
+    https://github.com/vstakhov/rspamd/blob/master/rules/forwarding.lua
+    https://github.com/bruceg/ezmlm-idx/blob/master/lib/sender.c
+
+    TODO : SRS, Google forward, btv1
+
+    :param str sender: The sender email address
+    :return: A cleaned sender email address
+    """
+
+    local_part, domain = sender.split('@')
+    if sender.startswith('prvs='):
+        # prvs=4480132787=billing@example.com
+        elements = local_part.split('=')
+        if len(elements) == 3:
+            try:
+                int(elements[1], 16)
+                tag_val = elements[1]
+                loc_core = elements[2]
+            except ValueError:
+                try:
+                    int(elements[2], 16)
+                    tag_val = elements[2]
+                    loc_core = elements[1]
+                except ValueError:
+                    raise Exception(
+                        'Neither the second nor third elements in the '
+                        'local-part of the address are valid prvs tag-val '
+                        'syntax')
+        else:
+            raise Exception(
+                'local-part of address appears to be prvs but there are not '
+                'three "=" delimited values')
+        return '%s@%s' % (loc_core, domain)
+    else:
+        return sender
+
+
 class Alerter:
     def __init__(self, config, event, context):
         self.config = config
@@ -305,11 +349,12 @@ class Alerter:
 
 
 class Email:
-    def __init__(self, config, event, alerter, gh):
+    def __init__(self, config, event, alerter, gh, dryrun=False):
         self.config = config
         self.event = event
         self.alerter = alerter
         self.gh = gh
+        self.dryrun = dryrun
         self.record = self.event['Records'][0]
         self.raw_subject = (self.record['ses']['mail']
                             ['commonHeaders']['subject'])
@@ -324,6 +369,7 @@ class Email:
         self.issue_number = ''
         self.raw_body = ''
         self.email_body = ''
+        self.email_body_text = ''
         self.stripped_reply = ''
         self.timestamp = 0
         self.new_attachment_urls = {}
@@ -372,6 +418,12 @@ class Email:
                     self.config['recipient_list'].keys(),
                     self.to_address
                 ))
+
+        try:
+            self.source = clean_sender_address(self.source)
+        except Exception as e:
+            logger.error('Failed to clean sender address %s due to "%s"'
+                         % (self.source, e))
 
         self.parse_subject()
         if not self.raw_body:
@@ -447,7 +499,7 @@ class Email:
         # lifecycle which automatically deletes old data
 
     def parse_email_payload(self):
-        """Parse a raw mime email into an email.message.Message object.
+        """Parse a raw mime email into a pyzmail.PyzMessage object.
         Write any attachments into the github repo and add a link to those
         files to the new_attachment_urls dict.
 
@@ -456,35 +508,45 @@ class Email:
 
         :return: nothing
         """
-        email_message = email.message_from_string(self.raw_body)
-        self.email_body = "Unable to parse body from email"
+        msg = pyzmail.PyzMessage.factory(self.raw_body)
         self.timestamp = email.utils.mktime_tz(
-            email.utils.parsedate_tz(email_message['Date']))
-        if email_message.is_multipart():
-            for part in email_message.walk():
-                content_type = part.get_content_type()
-                content_disposition = str(part.get('Content-Disposition'))
-                if ((content_type == 'text/plain') and
-                        ('attachment' not in content_disposition)):
-                    # We've found the body of the email
-                    self.email_body = part.get_payload(decode=True)  # decode
-                elif 'attachment' in content_disposition:
-                    # We've found an attachment
-                    filename = part.get_filename()
-                    storage_filename = "%s-%s" % (
-                        self.timestamp,
-                        filename)
-                    repo = self.gh.repository(self.config['github_owner'],
-                                              self.config['github_repo'])
+            email.utils.parsedate_tz(msg.get_decoded_header('Date')))
+
+        if msg.text_part is not None:
+            payload, used_charset = pyzmail.decode_text(
+                msg.text_part.get_payload(),
+                msg.text_part.charset,
+                None)
+            self.email_body_text = payload
+        else:
+            self.email_body_text = ''
+
+        if msg.html_part is not None:
+            self.email_body = msg.html_part.get_payload()
+        elif msg.text_part is not None:
+            self.email_body = self.email_body_text
+        else:
+            # Didn't find text or html
+            self.email_body = "Unable to parse body from email"
+
+        repo = self.gh.repository(self.config['github_owner'],
+                                  self.config['github_repo'])
+
+        for mailpart in msg.mailparts:
+            if not mailpart.is_body:  # This mailpart is an attachment
+                filename = mailpart.sanitized_filename
+                storage_filename = "%s-%s" % (self.timestamp, filename)
+                logger.info('Adding attachment %s to repo' % filename)
+                if not self.dryrun:
                     result = repo.create_file(
                         path='attachments/%s' % storage_filename,
                         message='Add attachment %s' % filename,
-                        content=part.get_payload(decode=True)
+                        content=mailpart.get_payload()
                     )
                     html_url = result['content'].html_url
                     self.new_attachment_urls[filename] = html_url
-        else:  # not multipart - i.e. plain text, no attachments
-            self.email_body = email_message.get_payload(decode=True)
+                else:
+                    self.new_attachment_urls[filename] = 'https://example.com'
 
 
 class EventHandler:
@@ -501,7 +563,10 @@ class EventHandler:
         self.alerter = Alerter(self.config, self.event, self.context)
         self.gh = github3.login(token=self.config['github_token'])
         self.s3 = boto3.client('s3')
-
+        self.dryrun_tag = (
+            self.config['dryrun_tag'] if 'dryrun_tag' in self.config
+            else '--#_##DRYRUN##_#--')
+        self.dryrun = False
 
     def update_issue(self, body, message_id, new_attachment_urls):
         """Parse the hidden content from the GitHub issue body, update it to
@@ -568,7 +633,7 @@ class EventHandler:
         response = self.s3.get_object(Bucket=bucket, Key=key)
         self.event = json.loads(response['Body'].read())
         logger.info(
-            "Email with message ID %s fetched from S3 and will now be"
+            "Email with message ID %s fetched from S3 and will now be "
             "replayed" % message_id)
 
     def process_event(self):
@@ -624,6 +689,12 @@ class EventHandler:
             raise Exception(
                 "Multiple records from SES %s" % self.event['Records'])
 
+        if (self.dryrun_tag in
+                self.event['Records'][0]['ses']['mail']
+                ['commonHeaders']['subject']):
+            self.dryrun = True
+            logger.info('Running in dryrun mode')
+
         bucket = self.config['ses_payload_s3_bucket_name']
         prefix = self.config['ses_payload_s3_prefix'] + 'email-events/'
         key = prefix + self.event['Records'][0]['ses']['mail']['messageId']
@@ -646,7 +717,8 @@ class EventHandler:
             x for x in all_plugins if hasattr(x, 'is_matching_email')
             and hasattr(x, 'transform_email')]
 
-        parsed_email = Email(self.config, self.event, self.alerter, self.gh)
+        parsed_email = Email(
+            self.config, self.event, self.alerter, self.gh, self.dryrun)
 
         for plugin in plugin_list:
             if plugin.is_matching_email(parsed_email):
@@ -668,7 +740,7 @@ class EventHandler:
                 self.config['github_owner'],
                 self.config['github_repo'],
                 parsed_email.issue_number)
-            if issue.is_closed():
+            if issue.is_closed() and not self.dryrun:
                 issue.reopen()
 
             if len(parsed_email.new_attachment_urls) > 0:
@@ -680,10 +752,11 @@ class EventHandler:
                 comment_attachments = ''
             # TODO : I'll ignore the "References" header for now because I
             # don't know what AWS SES does with it
-            issue.edit(body=self.update_issue(
-                issue.body,
-                parsed_email.message_id,
-                parsed_email.new_attachment_urls))
+            if not self.dryrun:
+                issue.edit(body=self.update_issue(
+                    issue.body,
+                    parsed_email.message_id,
+                    parsed_email.new_attachment_urls))
 
             comment_message = COMMENT_TEMPLATE.substitute(
                 from_address=parsed_email.from_address,
@@ -696,7 +769,8 @@ class EventHandler:
             logger.info(
                 "Adding a comment to the existing issue %s."
                 % parsed_email.issue_number)
-            issue.create_comment(comment_message)
+            if not self.dryrun:
+                issue.create_comment(comment_message)
         else:
             # Create new issue
             labels = ([self.config['issue_label']]
@@ -734,18 +808,23 @@ class EventHandler:
                     produce_attachment_table(parsed_email.new_attachment_urls)
                 )
             )
-            issue = self.gh.create_issue(
-                self.config['github_owner'],
-                self.config['github_repo'],
-                parsed_email.subject,
-                body=issue_message,
-                labels=labels
-            )
+            if not self.dryrun:
+                issue = self.gh.create_issue(
+                    self.config['github_owner'],
+                    self.config['github_repo'],
+                    parsed_email.subject,
+                    body=issue_message,
+                    labels=labels
+                )
+            else:
+                class Bunch:
+                    __init__ = lambda self, **kw: setattr(self, '__dict__', kw)
+                issue = Bunch(number=1)
             logger.info(
                 "Created new issue %s." % issue.number)
             if parsed_email.source in self.config['known_machine_senders']:
                 logger.info(
-                    "Not sending an email to %s because they are a known"
+                    "Not sending an email to %s because they are a known "
                     "machine sender." % parsed_email.source)
                 return True
             body = self.config['initial_email_reply']
@@ -772,22 +851,25 @@ class EventHandler:
             logger.info(
                 "Sending an email to %s confirming that a new issue has "
                 "been created." % parsed_email.from_address)
-            message_id = send_email(
-                email_subject=email_subject,
-                from_name=(self.config['recipient_list']
-                           [parsed_email.to_address].get('name')),
-                from_address=parsed_email.to_address,
-                to_address=parsed_email.from_address,
-                message_id=parsed_email.message_id,
-                references=parsed_email.message_id,
-                html=EMAIL_HTML_TEMPLATE.substitute(
-                    html_body=body.format(html_url),
-                    issue_reference=issue_reference,
-                    provider=self.config['provider_name']),
-                text=EMAIL_TEXT_TEMPLATE.substitute(
-                    text_body=body.format(text_url),
-                    issue_reference=issue_reference,
-                    provider=self.config['provider_name']))
+            if not self.dryrun:
+                message_id = send_email(
+                    email_subject=email_subject,
+                    from_name=(self.config['recipient_list']
+                               [parsed_email.to_address].get('name')),
+                    from_address=parsed_email.to_address,
+                    to_address=parsed_email.from_address,
+                    message_id=parsed_email.message_id,
+                    references=parsed_email.message_id,
+                    html=EMAIL_HTML_TEMPLATE.substitute(
+                        html_body=body.format(html_url),
+                        issue_reference=issue_reference,
+                        provider=self.config['provider_name']),
+                    text=EMAIL_TEXT_TEMPLATE.substitute(
+                        text_body=body.format(text_url),
+                        issue_reference=issue_reference,
+                        provider=self.config['provider_name']))
+            else:
+                message_id = '1'
             logger.debug(
                 'Initial email reply sent to %s with Message-ID %s'
                 % (parsed_email.from_address, message_id))
@@ -907,27 +989,30 @@ class EventHandler:
         logger.info(
             "Sending an email notification to %s with the new issue "
             "comment." % data['from'])
-        message_id = send_email(
-            email_subject="Re: %s" % subject,
-            from_name=self.config['recipient_list'][data['to']].get(
-                'name'),
-            from_address=data['to'],
-            to_address=data['from'],
-            message_id=data['message_id'],
-            references=data['message_id'],
-            html=EMAIL_HTML_TEMPLATE.substitute(
-                html_body=html_email_body,
-                issue_reference=issue_reference,
-                provider=self.config['provider_name']),
-            text=EMAIL_TEXT_TEMPLATE.substitute(
-                text_body=text_email_body,
-                issue_reference=issue_reference,
-                provider=self.config['provider_name']))
 
-        self.update_issue(
-            message['issue']['body'],
-            message_id,
-            {})
+        if self.dryrun_tag not in message['comment']['body']:
+            logger.info('Running in dryrun mode')
+            message_id = send_email(
+                email_subject="Re: %s" % subject,
+                from_name=self.config['recipient_list'][data['to']].get(
+                    'name'),
+                from_address=data['to'],
+                to_address=data['from'],
+                message_id=data['message_id'],
+                references=data['message_id'],
+                html=EMAIL_HTML_TEMPLATE.substitute(
+                    html_body=html_email_body,
+                    issue_reference=issue_reference,
+                    provider=self.config['provider_name']),
+                text=EMAIL_TEXT_TEMPLATE.substitute(
+                    text_body=text_email_body,
+                    issue_reference=issue_reference,
+                    provider=self.config['provider_name']))
+
+            self.update_issue(
+                message['issue']['body'],
+                message_id,
+                {})
 
 
 def lambda_handler(event, context):

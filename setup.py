@@ -11,7 +11,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='birch_girder',
-    version='0.8.1',
+    version='0.8.2',
     description='An Email Interface for GitHub Issues',
     long_description=long_description,
     url='https://github.com/gene1wood/birch-girder',
@@ -33,5 +33,6 @@ setup(
         'github3.py',
         'PyYAML',
         'python-dateutil',
-        'email_reply_parser']
+        'email_reply_parser',
+        'pyzmail']
 )
