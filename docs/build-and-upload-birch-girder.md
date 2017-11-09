@@ -19,7 +19,7 @@ in). Create the zip file as follows
 
 Then fetch the resulting zip from the ec2 instance with scp
 
-Add the connector to the zipped virtualenv
+Add the Birch Girder lambda code to the zipped virtualenv
 ------------------------------------------
 
     zip --junk-paths artifacts/birch-girder.zip birch_girder/__init__.py

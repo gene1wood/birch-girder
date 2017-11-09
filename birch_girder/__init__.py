@@ -906,22 +906,20 @@ class EventHandler:
 
         message = json.loads(self.event['Records'][0]['Sns']['Message'])
         mention = '@%s' % self.config['github_username']
-        if 'action' not in message:
-            logger.info('action key missing from SNS message : %s'
+
+        if 'comment' not in message or 'issue' not in message:
+            logger.debug('Non IssueCommentEvent webhook event received : %s'
                         % self.event['Records'][0]['Sns']['Message'])
             return False
+        if 'action' not in message :
+            logger.error('action key missing from SNS message : %s'
+                        % self.event['Records'][0]['Sns']['Message'])
+            return False
+
         if message['action'] != 'created':
             logger.info(
-                'GitHub action in SNS message was "%s" so it will be ignored'
-                % message['action'])
-            return False
-        if 'comment' not in message:
-            logger.info('comment key missing from SNS message : %s'
-                        % self.event['Records'][0]['Sns']['Message'])
-            return False
-        if 'issue' not in message:
-            logger.info('issue key missing from SNS message : %s'
-                        % self.event['Records'][0]['Sns']['Message'])
+                'GitHub IssueCommentEvent action in SNS message was "%s" so '
+                'it will be ignored' % message['action'])
             return False
         if message['issue']['user']['login'] != self.config['github_username']:
             logger.info(
@@ -991,7 +989,6 @@ class EventHandler:
             "comment." % data['from'])
 
         if self.dryrun_tag not in message['comment']['body']:
-            logger.info('Running in dryrun mode')
             message_id = send_email(
                 email_subject="Re: %s" % subject,
                 from_name=self.config['recipient_list'][data['to']].get(
@@ -1013,16 +1010,16 @@ class EventHandler:
                 message['issue']['body'],
                 message_id,
                 {})
-
+        else:
+            logger.info('Running in dryrun mode')
 
 def lambda_handler(event, context):
-    """
-    Given an event determine if it's and incoming email or an SNS webhook alert
+    """Given an event determine if it's and incoming email or an SNS webhook alert
     and trigger the appropriate method
 
     :param event: A dictionary of metadata for an event
     :param context: The AWS Lambda context object
-    :return: A list of checks which resulted in failures
+    :return:
     """
     logger.debug('got event {}'.format(event))
     with open('config.yaml') as f:

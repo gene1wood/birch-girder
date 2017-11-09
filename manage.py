@@ -38,7 +38,7 @@ def grant_lambda_policy_permissions(config, lambda_function_arn):
     )
     print('Permission %s added : %s' % (statement_id, response['Statement']))
 
-    statement_id = 'GiveBirchGirderSNSTopicPermissionToInvokeFunction'
+    statement_id = 'GiveGithubWebhookSNSTopicPermissionToInvokeFunction'
     try:
         client.remove_permission(
             FunctionName=lambda_function_arn,
@@ -54,24 +54,6 @@ def grant_lambda_policy_permissions(config, lambda_function_arn):
         Action='lambda:InvokeFunction',
         Principal='sns.amazonaws.com',
         SourceArn=topic
-    )
-    print('Permission %s added : %s' % (statement_id, response['Statement']))
-
-    statement_id = 'GiveBirchGirderAlertSNSTopicPermissionToInvokeFunction'
-    try:
-        client.remove_permission(
-            FunctionName=lambda_function_arn,
-            StatementId=statement_id
-        )
-        print('%s Lambda permission removed' % statement_id)
-    except:
-        pass
-    response = client.add_permission(
-        FunctionName=lambda_function_arn,
-        StatementId=statement_id,
-        Action='lambda:InvokeFunction',
-        Principal='sns.amazonaws.com',
-        SourceArn=alert_topic
     )
     print('Permission %s added : %s' % (statement_id, response['Statement']))
 
@@ -177,7 +159,7 @@ def create_github_iam_user(config, iam_username='github-sns-publisher'):
         UserName=iam_username
     )
     print('IAM user %s created' % response['User']['UserName'])
-    policy_name = 'PublishToSNSaws-ses-github-connector'
+    policy_name = 'PublishToGithubWebhookSNSTopic'
     client.put_user_policy(
         UserName=iam_username,
         PolicyName=policy_name,

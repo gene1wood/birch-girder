@@ -1,5 +1,5 @@
 ---
-sns_topic_arn: arn:aws:sns:us-west-2:123456789012:GithubIssueCommentWebhookTopic
+sns_topic_arn: arn:aws:sns:us-west-2:123456789012:GithubWebhookTopic
 sns_region: us-west-2
 github_token: 0123456789abcdef0123456789abcdef01234567
 github_username: hubot

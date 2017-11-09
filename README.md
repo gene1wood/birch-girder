@@ -44,13 +44,13 @@ Notably you don't need a server to run Birch Girder.
       "SES" -> "Lambda:birch-girder" [ color="0.650 0.700 0.700" ]
       "Lambda:birch-girder" -> "S3:mybucket" [ color="0.650 0.700 0.700" ]
       "Lambda:birch-girder" -> "GitHub Issue 123" [ label = "GitHub API v3", color="0.650 0.700 0.700" ]
-      "GitHub Issue 123" -> "SNS:GithubIssueCommentWebhookTopic" [ label = "sns:Publish\nIssueCommentEvent", color="0.348 0.839 0.839" ]
-      "SNS:GithubIssueCommentWebhookTopic" -> "Lambda:birch-girder" [ color="0.348 0.839 0.839" ]
+      "GitHub Issue 123" -> "SNS:GithubWebhookTopic" [ label = "sns:Publish\nIssueCommentEvent", color="0.348 0.839 0.839" ]
+      "SNS:GithubWebhookTopic" -> "Lambda:birch-girder" [ color="0.348 0.839 0.839" ]
       "Lambda:birch-girder" -> "SES" [ color="0.348 0.839 0.839" ]
       "SES" ->  "user@example.com" [ label = "SMTP" , color="0.348 0.839 0.839" ]
       "support tech" -> "GitHub Issue 123" [ label = "add issue\ncomment", color="0.348 0.839 0.839" ]
       { rank=same; "support@example.com"; "user@example.com"; }
-      { rank=same; "support tech"; "SNS:GithubIssueCommentWebhookTopic"; }
+      { rank=same; "support tech"; "SNS:GithubWebhookTopic"; }
     }
 
 -->
@@ -146,14 +146,13 @@ a mix of manual steps and commands run with the `manage.py` tool
 ```
 ./manage.py grant-lambda-policy-permissions --lambda-function-arn arn:aws:lambda:us-west-2:123456789012:function:birch-girder
     Permission GiveSESPermissionToInvokeFunction added : {"Sid":"GiveSESPermissionToInvokeFunction","Effect":"Allow","Principal":{"Service":"ses.amazonaws.com"},"Action":"lambda:InvokeFunction","Resource":"arn:aws:lambda:us-west-2:123456789012:function:birch-girder","Condition":{"StringEquals":{"AWS:SourceAccount":"123456789012"}}}
-    Permission GiveBirchGirderSNSTopicPermissionToInvokeFunction added : {"Sid":"GiveBirchGirderSNSTopicPermissionToInvokeFunction","Effect":"Allow","Principal":{"Service":"sns.amazonaws.com"},"Action":"lambda:InvokeFunction","Resource":"arn:aws:lambda:us-west-2:BirchGirderAlerts:function:birch-girder","Condition":{"ArnLike":{"AWS:SourceArn":"arn:aws:sns:us-west-2:123456789012:GithubIssueCommentWebhookTopic"}}}
-    Permission GiveBirchGirderAlertSNSTopicPermissionToInvokeFunction added : {"Sid":"GiveBirchGirderAlertSNSTopicPermissionToInvokeFunction","Effect":"Allow","Principal":{"Service":"sns.amazonaws.com"},"Action":"lambda:InvokeFunction","Resource":"arn:aws:lambda:us-west-2:BirchGirderAlerts:function:birch-girder","Condition":{"ArnLike":{"AWS:SourceArn":"arn:aws:sns:us-west-2:123456789012:BirchGirderAlerts"}}}
+    Permission GiveGithubWebhookSNSTopicPermissionToInvokeFunction added : {"Sid":"GiveGithubWebhookSNSTopicPermissionToInvokeFunction","Effect":"Allow","Principal":{"Service":"sns.amazonaws.com"},"Action":"lambda:InvokeFunction","Resource":"arn:aws:lambda:us-west-2:BirchGirderAlerts:function:birch-girder","Condition":{"ArnLike":{"AWS:SourceArn":"arn:aws:sns:us-west-2:123456789012:GithubWebhookTopic"}}}
 ./manage.py setup-ses --lambda-function-arn arn:aws:lambda:us-west-2:123456789012:function:birch-girder
     SES Rule Set birch-girder-ruleset created
     SES Rule birch-girder-rule created in Rule Set
     SES Rule Set birch-girder-ruleset set as active
 ./manage.py create-sns-topic
-    Topic ARN : arn:aws:sns:us-west-2:123456789012:GithubIssueCommentWebhookTopic
+    Topic ARN : arn:aws:sns:us-west-2:123456789012:GithubWebhookTopic
 ./manage.py create-github-iam-user --github-iam-user staging-github-sns-publisher
     AccessKeyId :  AKIAIOSFODNN7EXAMPLE
     SecretAccessKey :  wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
@@ -165,7 +164,7 @@ a mix of manual steps and commands run with the `manage.py` tool
 ./manage.py configure-github-webhook
     GitHub webook "amazonsns" on repo https://github.com/octocat/Spoon-Knife configured to trigger on [u'issue_comment']
 ./manage.py subscribe-lambda-to-sns --lambda-function-arn arn:aws:lambda:us-west-2:123456789012:function:birch-girder
-    Subscription ARN : arn:aws:sns:us-west-2:123456789012:GithubIssueCommentWebhookTopic:e4c5eb60-b40d-4bf2-aa33-07d74ab81856
+    Subscription ARN : arn:aws:sns:us-west-2:123456789012:GithubWebhookTopic:e4c5eb60-b40d-4bf2-aa33-07d74ab81856
 ```
 
 ## Setup config
