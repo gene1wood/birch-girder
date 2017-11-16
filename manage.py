@@ -302,13 +302,16 @@ def configure_github_webhook(config):
     # https://stackoverflow.com/a/43522648/168874
     gh = login(token=config['github_webhook_editor_token'])
     repo = gh.repository(config['github_owner'], config['github_repo'])
-    events = [u'issue_comment']
+    new_event = u'issue_comment'
     for hook in repo.iter_hooks():
         if hook.name == u'amazonsns':
-            result = hook.edit(events=events)
-            print(
-                'GitHub webook "amazonsns" on repo %s configured to trigger on'
-                ' %s' % (repo.html_url, events))
+            if new_event not in hook.events:
+                events = hook.events
+                events.append(new_event)
+                result = hook.edit(events=events)
+                print(
+                    'GitHub webook "amazonsns" on repo %s configured to trigger on'
+                    ' %s' % (repo.html_url, events))
 
 
 def create_s3_bucket(config):
