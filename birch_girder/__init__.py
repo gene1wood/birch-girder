@@ -984,11 +984,10 @@ class EventHandler:
             message['issue']['number']
         )
 
-        logger.info(
-            "Sending an email notification to %s with the new issue "
-            "comment." % data['from'])
-
         if self.dryrun_tag not in message['comment']['body']:
+            logger.info(
+                "Sending an email notification to %s with the new issue "
+                "comment." % data['from'])
             message_id = send_email(
                 email_subject="Re: %s" % subject,
                 from_name=self.config['recipient_list'][data['to']].get(
@@ -1011,7 +1010,8 @@ class EventHandler:
                 message_id,
                 {})
         else:
-            logger.info('Running in dryrun mode')
+            logger.info('Running in dryrun mode. No email notification for %s'
+                        'sent' % data['from'])
 
 def lambda_handler(event, context):
     """Given an event determine if it's and incoming email or an SNS webhook alert
