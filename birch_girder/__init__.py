@@ -332,6 +332,9 @@ class Alerter:
         :return: Dictionary containing the MessageId of the published SNS
         message
         """
+        if 'alert_sns_topic_arn' not in self.config:
+            return
+
         if len(message) > 0:
             message += "\n"
         logger.error('Alerting on events %s' % self.event)
@@ -822,12 +825,17 @@ class EventHandler:
                 issue = Bunch(number=1)
             logger.info(
                 "Created new issue %s." % issue.number)
-            if parsed_email.source in self.config['known_machine_senders']:
+            if ('known_machine_senders' in self.config
+                and parsed_email.source in self.config['known_machine_senders']):
                 logger.info(
                     "Not sending an email to %s because they are a known "
                     "machine sender." % parsed_email.source)
                 return True
-            body = self.config['initial_email_reply']
+            body = (
+                self.config['initial_email_reply'] if 'initial_email_reply'
+                else '''Thanks for contacting us. We will get back to you as soon
+  as possible. You can reply to this email if you have additional information
+  to add to your request.''')
             text_url = 'https://github.com/%s/%s/issues/%s' % (
                 self.config['github_owner'],
                 self.config['github_repo'],
