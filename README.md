@@ -122,8 +122,10 @@ a mix of manual steps and commands run with the `manage.py` tool
 * Fill out all remaining fields in config.yaml
 
 ```
-./manage.py create-github-repo
+./manage.py create-github-repo --github-repo octocat/Spoon-Knife
     Created GitHub repo https://github.com/octocat/Spoon-Knife
+./manage.py create-github-repo --github-repo octocat/Fork-Chopstick
+    Created GitHub repo https://github.com/octocat/Fork-Chopstick
 ./manage.py create-bucket
     Bucket http://examplebucket.s3.amazonaws.com/ created
     Bucket policy for examplebucket created
@@ -158,11 +160,23 @@ a mix of manual steps and commands run with the `manage.py` tool
     SecretAccessKey :  wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 ```
 
-* Setup the GitHub integration with AWS SNS in the GitHub web UI (instructions below)
+* Setup the GitHub integration with AWS SNS in the GitHub web UI for each repository
+  that will use Birch Girder
+  * Browse to the GitHub repo... `Settings`... `Integrations & services`
+  * Click `Add Service` and search for `Amazon SNS`
+  * Enter the `AccessKeyId` obtained in the create-github-iam-user step into the `Aws key` field
+  * Enter the `sns_topic_arn` from config.yaml into the `Sns topic` field
+  * Enter the `sns_region` from config.yaml into the `Sns region` field
+  * Enter the `SecretAccessKey` obtained in the create-github-iam-user step into the `Aws secret` field
+  * Click `Add Service`
 
 ```
-./manage.py configure-github-webhook
+./manage.py configure-github-webhook --github-repo octocat/Spoon-Knife
     GitHub webook "amazonsns" on repo https://github.com/octocat/Spoon-Knife configured to trigger on [u'issue_comment']
+./manage.py configure-github-webhook --github-repo octocat/Fork-Chopstick
+    GitHub webook "amazonsns" on repo https://github.com/octocat/Fork-Chopstick configured to trigger on [u'issue_comment']
+
+
 ./manage.py subscribe-lambda-to-sns --lambda-function-arn arn:aws:lambda:us-west-2:123456789012:function:birch-girder
     Subscription ARN : arn:aws:sns:us-west-2:123456789012:GithubWebhookTopic:e4c5eb60-b40d-4bf2-aa33-07d74ab81856
 ```
@@ -181,8 +195,6 @@ Create a `config.yaml` file looking like [`example.config.yaml`](https://github.
   comment in GitHub issues
 * `github_username` : The GitHub username of the user you used to create the
   `github_token`
-* `github_owner` : The GitHub username of the GitHub repo owner
-* `github_repo` : The GitHub repo name
 * `ses_payload_s3_bucket_name` : The name of the S3 bucket to use
 * `ses_payload_s3_prefix` : The directory prefix in the S3 bucket to temporarily
   put all SES email payloads in
@@ -200,6 +212,9 @@ Create a `config.yaml` file looking like [`example.config.yaml`](https://github.
   ticketing systems or automated (non-human)
 * `recipient_list` : A list of email addresses at which you want to receive
   inbound emails that will trigger the creation of GitHub issues.
+  * `owner` : The GitHub username of the GitHub repo owner handling issues from
+    this recipient
+  * `repo` : The GitHub repo name handling issues from this recipient
   * `label` : For each recipient, the [GitHub label](https://help.github.com/articles/about-labels/)
     to apply to issues generated for that recipient
   * `name` : The name to put in the `From` field of emails sent back to users
@@ -250,7 +265,7 @@ Create a `config.yaml` file looking like [`example.config.yaml`](https://github.
 * A GitHub integration/service of type "Amazon SNS" configured on that
   repository that tells GitHub to publish a notification to the SNS topic
   you've created each time something happens in that repository.
-  * Browse to your GitHub repo... `Settings`... [`Integrations & services`](https://github.com/iocoop/birch-girder-test-issue-repo/settings/installations)
+  * Browse to your GitHub repo... `Settings`... `Integrations & services`
   * Click Add Service and search for `Amazon SNS`
   * Enter the `AccessKeyId` obtained in the create-github-iam-user step into the `Aws key` field
   * Enter the `sns_topic_arn` from config.yaml into the `Sns topic` field

@@ -370,6 +370,8 @@ class Email:
         self.date = self.record['ses']['mail']['commonHeaders']['date']
         self.subject = ''
         self.issue_number = ''
+        self.github_owner = ''
+        self.github_repo = ''
         self.raw_body = ''
         self.email_body = ''
         self.email_body_text = ''
@@ -427,6 +429,10 @@ class Email:
         except Exception as e:
             logger.error('Failed to clean sender address %s due to "%s"'
                          % (self.source, e))
+
+        self.github_owner = self.config['recipient_list'][self.to_address].get('owner')
+        self.github_repo = self.config['recipient_list'][self.to_address].get(
+            'repo')
 
         self.parse_subject()
         if not self.raw_body:
@@ -532,8 +538,7 @@ class Email:
             # Didn't find text or html
             self.email_body = "Unable to parse body from email"
 
-        repo = self.gh.repository(self.config['github_owner'],
-                                  self.config['github_repo'])
+        repo = self.gh.repository(self.github_owner, self.github_repo)
 
         for mailpart in msg.mailparts:
             if not mailpart.is_body:  # This mailpart is an attachment
@@ -740,8 +745,8 @@ class EventHandler:
         if parsed_email.issue_number:
             # Add a comment to the existing issue
             issue = self.gh.issue(
-                self.config['github_owner'],
-                self.config['github_repo'],
+                parsed_email.github_owner,
+                parsed_email.github_repo,
                 parsed_email.issue_number)
             if issue.is_closed() and not self.dryrun:
                 issue.reopen()
@@ -813,8 +818,8 @@ class EventHandler:
             )
             if not self.dryrun:
                 issue = self.gh.create_issue(
-                    self.config['github_owner'],
-                    self.config['github_repo'],
+                    parsed_email.github_owner,
+                    parsed_email.github_repo,
                     parsed_email.subject,
                     body=issue_message,
                     labels=labels
@@ -837,13 +842,13 @@ class EventHandler:
   as possible. You can reply to this email if you have additional information
   to add to your request.''')
             text_url = 'https://github.com/%s/%s/issues/%s' % (
-                self.config['github_owner'],
-                self.config['github_repo'],
+                parsed_email.github_owner,
+                parsed_email.github_repo,
                 issue.number
             )
             issue_reference = '%s/%s#%s' % (
-                self.config['github_owner'],
-                self.config['github_repo'],
+                parsed_email.github_owner,
+                parsed_email.github_repo,
                 issue.number
             )
             html_url = '<a href="%s">%s</a>' % (
@@ -978,8 +983,8 @@ class EventHandler:
             stripped_comment,
             mode='gfm',
             context='%s/%s' % (
-                self.config['github_owner'],
-                self.config['github_repo'])
+                message['repository']['owner']['login'],
+                message['repository']['name'])
         )
         html_email_body = (
             '<a href="https://github.com/{username}">@{username}</a> writes :'
@@ -987,8 +992,8 @@ class EventHandler:
                                           html_comment=html_comment))
 
         issue_reference = '%s/%s#%s' % (
-            self.config['github_owner'],
-            self.config['github_repo'],
+            message['repository']['owner']['login'],
+            message['repository']['name'],
             message['issue']['number']
         )
 
