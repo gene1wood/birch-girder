@@ -470,13 +470,14 @@ class Email:
             gh_query = ""
             gh_query += "author:%s " % self.config['github_username']
             gh_query += "type:issue "
-            gh_query += "repo:%s/%s " % (self.config['github_owner'],
-                                         self.config['github_repo'])
-            gh_query += "in:title \"%s\" " % self.subject
+            gh_query += "repo:%s/%s " % (self.github_owner, self.github_repo)
             gh_query += ("label:%s " % self.config['issue_label']
                          if 'issue_label' in self.config else "")
             results = self.gh.search_issues(gh_query)
-            results_list = list(results)
+            results_list = []
+            for issue_search_result in results:
+                if self.subject in issue_search_result.issue.title:
+                    results_list.append(issue_search_result.issue)
             logger.log(
                 logging.DEBUG,
                 "Search \"%s\" triggered by inbound \"%s\" email yielded %s "
@@ -490,7 +491,7 @@ class Email:
                 # One matching issue found but the subject didn't have an
                 # issue number
                 # Add a comment to the issue
-                self.issue_number = results_list[0].issue.number
+                self.issue_number = results_list[0].number
 
     def get_email_payload(self):
         """Wait for an S3 object to exist with a filename of the email
