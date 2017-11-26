@@ -344,7 +344,7 @@ class Alerter:
         subject = 'Alert from Birch Girder'
         client = boto3.client(
             'sns', region_name=self.config['alert_sns_region'])
-        return client.publish(
+        client.publish(
             TopicArn=self.config['alert_sns_topic_arn'],
             Message=message,
             Subject=subject
@@ -457,6 +457,11 @@ class Email:
             # The inbound email has an existing issue number in the subject
             # Add a comment to the issue
             self.subject, self.issue_number = match.groups()
+            logger.log(
+                logging.DEBUG,
+                "Inbound email with subject \"%s\" contains existing issue "
+                "number %s and results in subject \"%s\""
+                % (stripped_subject, self.issue_number, self.subject))
         else:
             # The inbound email has no issue number in the subject
             # Search for an existing issue with a matching subject
@@ -474,9 +479,8 @@ class Email:
             results_list = list(results)
             logger.log(
                 logging.DEBUG,
-                "Search triggered by inbound \"%s\" email yielded %s results" %
-                (self.subject, len(results_list))
-            )
+                "Search \"%s\" triggered by inbound \"%s\" email yielded %s "
+                "results" % (gh_query, self.subject, len(results_list)))
 
             if len(results_list) == 0 or len(results_list) > 1:
                 # No matching issue found or multiple matching issues found
@@ -737,7 +741,7 @@ class EventHandler:
             "subject is '%s' and issue number is %s" % (
                 parsed_email.from_address,
                 parsed_email.to_address,
-                parsed_email.message_id,
+                parsed_email.record['ses']['mail']['messageId'],
                 parsed_email.subject,
                 parsed_email.issue_number
             ))
@@ -865,6 +869,9 @@ class EventHandler:
                 "Sending an email to %s confirming that a new issue has "
                 "been created." % parsed_email.from_address)
             if not self.dryrun:
+                template_args = {
+                    'issue_reference': issue_reference,
+                    'provider': self.config['provider_name']}
                 message_id = send_email(
                     email_subject=email_subject,
                     from_name=(self.config['recipient_list']
@@ -875,12 +882,10 @@ class EventHandler:
                     references=parsed_email.message_id,
                     html=EMAIL_HTML_TEMPLATE.substitute(
                         html_body=body.format(html_url),
-                        issue_reference=issue_reference,
-                        provider=self.config['provider_name']),
+                        **template_args),
                     text=EMAIL_TEXT_TEMPLATE.substitute(
                         text_body=body.format(text_url),
-                        issue_reference=issue_reference,
-                        provider=self.config['provider_name']))
+                        **template_args))
             else:
                 message_id = '1'
             logger.debug(
