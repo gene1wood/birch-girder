@@ -472,8 +472,10 @@ class Email:
             gh_query += "author:%s " % self.config['github_username']
             gh_query += "type:issue "
             gh_query += "repo:%s/%s " % (self.github_owner, self.github_repo)
-            gh_query += ("label:%s " % self.config['issue_label']
-                         if 'issue_label' in self.config else "")
+            if 'label' in self.config['recipient_list'][self.to_address]:
+                gh_query += (
+                    "label:%s " %
+                    self.config['recipient_list'][self.to_address]['label'])
             results = self.gh.search_issues(gh_query)
             results_list = []
             for issue_search_result in results:
@@ -791,14 +793,11 @@ class EventHandler:
                 issue.create_comment(comment_message)
         else:
             # Create new issue
-            labels = ([self.config['issue_label']]
-                      if 'issue_label' in self.config
-                      else [])
             # Either label the issue with the label from the recipient_list or
             # just use the username of the email to_address
-            labels.append(
+            labels = [
                 self.config['recipient_list'][parsed_email.to_address].get(
-                    'label', parsed_email.to_address.split('@')[0]))
+                    'label', parsed_email.to_address.split('@')[0])]
 
             email_metadata = {
                 'from': parsed_email.from_address,
