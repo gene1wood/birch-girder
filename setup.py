@@ -30,6 +30,7 @@ setup(
     packages=find_packages(exclude=['contrib', 'docs', 'tests']),
     install_requires=[
         'boto3',
+        'botocore>1.8.8',
         'github3.py',
         'PyYAML',
         'python-dateutil',
