@@ -846,7 +846,8 @@ class EventHandler:
                     "machine sender." % parsed_email.source)
                 return True
             body = (
-                self.config['initial_email_reply'] if 'initial_email_reply'
+                self.config['initial_email_reply']
+                if 'initial_email_reply' in self.config
                 else '''Thanks for contacting us. We will get back to you as soon
   as possible. You can reply to this email if you have additional information
   to add to your request.''')
