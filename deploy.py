@@ -679,8 +679,6 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
             zipfile.ZIP_DEFLATED)
 
         for filename in os.listdir(args.plugins_path):
-            if filename == '__init__.py':
-                continue
             arcname = os.path.join('plugins', filename)
             full_path = os.path.join(args.plugins_path, filename)
             zip_file.write(
