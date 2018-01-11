@@ -20,7 +20,7 @@ import glob
 import os.path
 import importlib
 import pyzmail
-from bs4 import BeautifulSoup
+import bs4
 
 TIME_ZONE = tz.gettz('America/Los_Angeles')
 
@@ -542,11 +542,13 @@ class Email:
             self.email_body_text = ''
 
         if msg.html_part is not None:
-            soup = BeautifulSoup(msg.html_part.get_payload(), 'html.parser')
+            soup = bs4.BeautifulSoup(
+                msg.html_part.get_payload(), 'html.parser')
             self.email_body = ''.join(
                 unicode(x) for x in (
                     soup.body.contents
-                    if soup.body is not None else soup.contents))
+                    if soup.body is not None else soup.contents)
+                if not isinstance(x, bs4.Comment))
         elif msg.text_part is not None:
             self.email_body = self.email_body_text
         else:
