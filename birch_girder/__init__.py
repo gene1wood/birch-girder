@@ -558,7 +558,10 @@ class Email:
         repo = self.gh.repository(self.github_owner, self.github_repo)
 
         for mailpart in msg.mailparts:
-            if not mailpart.is_body:  # This mailpart is an attachment
+            if not mailpart.is_body in ['text/plain', 'text/html']:
+                # This mailpart is an attachment
+                # Note: We have to check for specific values of is_body because
+                # pyzmail doesn't set is_body to None as the docs indicate
                 filename = mailpart.sanitized_filename
                 storage_filename = "%s-%s" % (self.timestamp, filename)
                 logger.info('Adding attachment %s to repo' % filename)
