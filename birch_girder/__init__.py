@@ -241,18 +241,19 @@ def produce_attachment_table(attachments):
 
 
 def send_email(email_subject, from_name, from_address, to_address,
-               message_id, references, html, text):
+               in_reply_to, references, html, text):
     """Send an email using AWS SES in both a text and html format
 
     :param str email_subject:
     :param str from_name:
     :param str from_address:
     :param str to_address:
-    :param str message_id:
+    :param str in_reply_to: The Message-ID of the email to which this sent
+        email is a reply to
     :param str references:
     :param str html: The HTML email body
     :param str text: The text email body
-    :return: The new MessageId of the sent email
+    :return: The new Message-ID of the sent email
     """
     client = boto3.client('ses')
     msg = MIMEMultipart('alternative')
@@ -261,7 +262,8 @@ def send_email(email_subject, from_name, from_address, to_address,
         from_address if from_name is None
         else "%s <%s>" % (from_name, from_address))
     msg['To'] = to_address
-    msg['In-Reply-To'] = message_id
+    if in_reply_to is not None:
+        msg['In-Reply-To'] = in_reply_to
     msg['References'] = references
     part1 = MIMEText(text, 'plain')
     part2 = MIMEText(html, 'html')
@@ -365,9 +367,9 @@ class Email:
         self.from_address = ''
         self.source = self.record['ses']['mail']['source'].lower()
         self.to_address = ''
-        self.message_id = (self.record['ses']['mail']
-                           ['commonHeaders']['messageId'])
         self.s3_payload_filename = self.record['ses']['mail']['messageId']
+        self.message_id = self.record['ses']['mail']['commonHeaders'].get(
+            'messageId')
         self.date = self.record['ses']['mail']['commonHeaders']['date']
         self.subject = ''
         self.issue_number = ''
@@ -497,8 +499,9 @@ class Email:
                 self.issue_number = results_list[0].number
 
     def get_email_payload(self):
-        """Wait for an S3 object to exist with a filename of the email
-        message_id. Once the object exists, fetch and set self.raw_body.
+        """Wait for an S3 object to exist with a filename of the SES internal
+        messageId value (s3_payload_filename). Once the object exists, fetch
+        and set self.raw_body.
 
         :return:
         """
@@ -640,21 +643,23 @@ class EventHandler:
         )
         return body
 
-    def fetch_replay(self, message_id):
-        """Fetch an event stored in S3 based on message_id and overwrite
-        self.event with the fetched event in order to replay that email again.
+    def fetch_replay(self, s3_payload_filename):
+        """Fetch an event stored in S3 based on the SES internal messageId
+        value (s3_payload_filename) and overwrite self.event with the fetched
+        event in order to replay that email again.
 
-        :param str message_id: The message ID of the email to replay
+        :param str s3_payload_filename: The SES internal messageId value of the
+            email to replay
         :return:
         """
         bucket = self.config['ses_payload_s3_bucket_name']
         prefix = self.config['ses_payload_s3_prefix'] + 'email-events/'
-        key = prefix + message_id
+        key = prefix + s3_payload_filename
         response = self.s3.get_object(Bucket=bucket, Key=key)
         self.event = json.loads(response['Body'].read())
         logger.info(
-            "Email with message ID %s fetched from S3 and will now be "
-            "replayed" % message_id)
+            "Email with SES internal messageID %s fetched from S3 and will "
+            "now be replayed" % s3_payload_filename)
 
     def process_event(self):
         """Determine event type and call the associated processor
@@ -745,11 +750,12 @@ class EventHandler:
                 plugin.transform_email(parsed_email)
 
         logger.info(
-            "Received an email from %s to %s with a message_id of %s. The "
-            "subject is '%s' and issue number is %s" % (
+            "Received an email from %s to %s with a SES internal messageId "
+            "value of %s and Message-ID of %s. The subject is '%s' and issue number is %s" % (
                 parsed_email.from_address,
                 parsed_email.to_address,
-                parsed_email.record['ses']['mail']['messageId'],
+                parsed_email.s3_payload_filename,
+                parsed_email.message_id,
                 parsed_email.subject,
                 parsed_email.issue_number
             ))
@@ -884,7 +890,7 @@ class EventHandler:
                                [parsed_email.to_address].get('name')),
                     from_address=parsed_email.to_address,
                     to_address=parsed_email.from_address,
-                    message_id=parsed_email.message_id,
+                    in_reply_to=parsed_email.message_id,
                     references=parsed_email.message_id,
                     html=EMAIL_HTML_TEMPLATE.substitute(
                         html_body=body.format(html_url),
@@ -1018,7 +1024,7 @@ class EventHandler:
                     'name'),
                 from_address=data['to'],
                 to_address=data['from'],
-                message_id=data['message_id'],
+                in_reply_to=data['message_id'],
                 references=data['message_id'],
                 html=EMAIL_HTML_TEMPLATE.substitute(
                     html_body=html_email_body,
