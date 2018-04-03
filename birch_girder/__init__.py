@@ -942,6 +942,7 @@ class EventHandler:
 
         message = json.loads(self.event['Records'][0]['Sns']['Message'])
         mention = '@%s' % self.config['github_username']
+        mention_regex = r'\B%s\b' % mention
 
         if 'comment' not in message or 'issue' not in message:
             logger.debug('Non IssueCommentEvent webhook event received : %s'
@@ -967,7 +968,7 @@ class EventHandler:
                 'GitHub issue comment was made by %s so it will be ignored'
                 % self.config['github_username'])
             return False
-        if mention not in message['comment']['body']:
+        if re.search(mention_regex, message['comment']['body']) is None:
             logger.info(
                 'GitHub issue comment does not contain "%s" so it will be'
                 'ignored' % mention)
