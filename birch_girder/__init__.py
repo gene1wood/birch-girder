@@ -264,7 +264,8 @@ def send_email(email_subject, from_name, from_address, to_address,
     msg['To'] = to_address
     if in_reply_to is not None:
         msg['In-Reply-To'] = in_reply_to
-    msg['References'] = references
+    if references is not None:
+        msg['References'] = references
     part1 = MIMEText(text, 'plain')
     part2 = MIMEText(html, 'html')
     msg.attach(part1)
