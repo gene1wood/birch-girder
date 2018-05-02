@@ -864,8 +864,8 @@ class EventHandler:
                 self.config['initial_email_reply']
                 if 'initial_email_reply' in self.config
                 else '''Thanks for contacting us. We will get back to you as soon
-  as possible. You can reply to this email if you have additional information
-  to add to your request.''')
+as possible. You can reply to this email if you have additional information
+to add to your request.''')
             text_url = 'https://github.com/%s/%s/issues/%s' % (
                 parsed_email.github_owner,
                 parsed_email.github_repo,
@@ -907,6 +907,14 @@ class EventHandler:
                     text=EMAIL_TEXT_TEMPLATE.substitute(
                         text_body=body.format(text_url),
                         **template_args))
+
+                # Add a reaction to the issue indicating the sender has been
+                # replied to
+                issue = repo.issues[issue_data['number']]
+                status, reaction_data = issue.reactions.post(
+                    body={'content':'heart'},
+                    headers={
+                        'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
             else:
                 message_id = '1'
             logger.debug(
@@ -1052,6 +1060,14 @@ class EventHandler:
                 message['issue']['body'],
                 message_id,
                 {})
+
+            # Add a reaction to the comment indicating it's been emailed out
+            comment = (self.gh.repos[message['repository']['full_name']].
+                issues.comments[message['comment']['id']])
+            status, reaction_data = comment.reactions.post(
+                body={'content':'heart'},
+                headers={
+                    'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
         else:
             logger.info('Running in dryrun mode. No email notification for %s'
                         'sent' % data['from'])
