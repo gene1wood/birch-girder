@@ -399,7 +399,7 @@ class Email:
             if len(self.record['ses']['mail']['commonHeaders']['from']) == 1
             else ', '.join(
                 self.record['ses']['mail']['commonHeaders']['from']))
-        if len(self.record['ses']['mail']['commonHeaders']['to']) > 1:
+        if len(self.record['ses']['mail']['destination']) > 1:
             for possible_recipient in self.config['recipient_list'].keys():
                 # Assign the first matching address in recipient_list to
                 # to_address
