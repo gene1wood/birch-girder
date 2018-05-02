@@ -8,7 +8,7 @@ import re
 from datetime import datetime
 from string import Template
 import boto3
-import github3  # https://github3py.readthedocs.io/en/master/
+from agithub.GitHub import GitHub  # pypi install agithub
 import yaml  # pip install PyYAML
 from dateutil import tz  # sudo pip install python-dateutil
 import email
@@ -21,6 +21,7 @@ import os.path
 import importlib
 import pyzmail
 import bs4
+import base64
 
 TIME_ZONE = tz.gettz('America/Los_Angeles')
 
@@ -152,7 +153,6 @@ logging.getLogger('boto3').setLevel(logging.CRITICAL)
 logging.getLogger('botocore').setLevel(logging.CRITICAL)
 logging.getLogger('requests').setLevel(logging.CRITICAL)
 logging.getLogger('urllib3').setLevel(logging.CRITICAL)
-logging.getLogger('github3').setLevel(logging.CRITICAL)
 
 
 def get_event_type(event):
@@ -479,11 +479,11 @@ class Email:
                 gh_query += (
                     "label:%s " %
                     self.config['recipient_list'][self.to_address]['label'])
-            results = self.gh.search_issues(gh_query)
+            status, data = self.gh.search.issues.get(q=gh_query)
             results_list = []
-            for issue_search_result in results:
-                if self.subject in issue_search_result.issue.title:
-                    results_list.append(issue_search_result.issue)
+            for issue_search_result in data['items']:
+                if self.subject in issue_search_result['title']:
+                    results_list.append(issue_search_result['number'])
             logger.log(
                 logging.DEBUG,
                 "Search \"%s\" triggered by inbound \"%s\" email yielded %s "
@@ -497,7 +497,7 @@ class Email:
                 # One matching issue found but the subject didn't have an
                 # issue number
                 # Add a comment to the issue
-                self.issue_number = results_list[0].number
+                self.issue_number = results_list[0]
 
     def get_email_payload(self):
         """Wait for an S3 object to exist with a filename of the SES internal
@@ -556,8 +556,6 @@ class Email:
             # Didn't find text or html
             self.email_body = "Unable to parse body from email"
 
-        repo = self.gh.repository(self.github_owner, self.github_repo)
-
         for mailpart in msg.mailparts:
             if not mailpart.is_body in ['text/plain', 'text/html']:
                 # This mailpart is an attachment
@@ -567,12 +565,18 @@ class Email:
                 storage_filename = "%s-%s" % (self.timestamp, filename)
                 logger.info('Adding attachment %s to repo' % filename)
                 if not self.dryrun:
-                    result = repo.create_file(
-                        path='attachments/%s' % storage_filename,
-                        message='Add attachment %s' % filename,
-                        content=mailpart.get_payload()
+                    path = 'attachments/%s' % storage_filename
+                    status, data = (
+                        self.gh.repos[self.github_owner]
+                        [self.github_repo].contents[path].put(
+                            body={
+                                'message': 'Add attachment %s' % filename,
+                                'content': base64.b64encode(
+                                    mailpart.get_payload()).decode('utf-8')
+                            }
+                        )
                     )
-                    html_url = result['content'].html_url
+                    html_url = data['content']['html_url']
                     self.new_attachment_urls[filename] = html_url
                 else:
                     self.new_attachment_urls[filename] = 'https://example.com'
@@ -590,7 +594,7 @@ class EventHandler:
         self.event = event
         self.context = context
         self.alerter = Alerter(self.config, self.event, self.context)
-        self.gh = github3.login(token=self.config['github_token'])
+        self.gh = GitHub(token=self.config['github_token'])
         self.s3 = boto3.client('s3')
         self.dryrun_tag = (
             self.config['dryrun_tag'] if 'dryrun_tag' in self.config
@@ -750,6 +754,8 @@ class EventHandler:
 
         parsed_email = Email(
             self.config, self.event, self.alerter, self.gh, self.dryrun)
+        repo = (
+            self.gh.repos[parsed_email.github_owner][parsed_email.github_repo])
 
         for plugin in plugin_list:
             if plugin.is_matching_email(parsed_email):
@@ -767,13 +773,11 @@ class EventHandler:
             ))
 
         if parsed_email.issue_number:
+            issue = repo.issues[parsed_email.issue_number]
             # Add a comment to the existing issue
-            issue = self.gh.issue(
-                parsed_email.github_owner,
-                parsed_email.github_repo,
-                parsed_email.issue_number)
-            if issue.is_closed() and not self.dryrun:
-                issue.reopen()
+            status, issue_data = issue.get()
+            if issue_data['state'] == 'closed' and not self.dryrun:
+                status, issue_data = issue.patch(body={'state': 'open'})
 
             if len(parsed_email.new_attachment_urls) > 0:
                 comment_attachments = '''| Attachments |\n| --- |\n'''
@@ -785,10 +789,10 @@ class EventHandler:
             # TODO : I'll ignore the "References" header for now because I
             # don't know what AWS SES does with it
             if not self.dryrun:
-                issue.edit(body=self.update_issue(
-                    issue.body,
-                    parsed_email.message_id,
-                    parsed_email.new_attachment_urls))
+                new_body = self.update_issue(
+                    issue_data['body'], parsed_email.message_id,
+                    parsed_email.new_attachment_urls)
+                status, issue_data = issue.patch(body={'body': new_body})
 
             comment_message = COMMENT_TEMPLATE.substitute(
                 from_address=parsed_email.from_address,
@@ -802,7 +806,8 @@ class EventHandler:
                 "Adding a comment to the existing issue %s."
                 % parsed_email.issue_number)
             if not self.dryrun:
-                issue.create_comment(comment_message)
+                status, comment_data = issue.comments.post(
+                    body={'body': comment_message})
         else:
             # Create new issue
             # Either label the issue with the label from the recipient_list or
@@ -838,19 +843,17 @@ class EventHandler:
                 )
             )
             if not self.dryrun:
-                issue = self.gh.create_issue(
-                    parsed_email.github_owner,
-                    parsed_email.github_repo,
-                    parsed_email.subject,
-                    body=issue_message,
-                    labels=labels
+                status, issue_data = repo.issues.post(
+                    body={
+                        'title': parsed_email.subject,
+                        'body': issue_message,
+                        'labels': labels
+                    }
                 )
             else:
-                class Bunch:
-                    __init__ = lambda self, **kw: setattr(self, '__dict__', kw)
-                issue = Bunch(number=1)
+                issue_data = {'number': 1}
             logger.info(
-                "Created new issue %s." % issue.number)
+                "Created new issue %s." % issue_data['number'])
             if ('known_machine_senders' in self.config
                 and parsed_email.source in self.config['known_machine_senders']):
                 logger.info(
@@ -866,12 +869,12 @@ class EventHandler:
             text_url = 'https://github.com/%s/%s/issues/%s' % (
                 parsed_email.github_owner,
                 parsed_email.github_repo,
-                issue.number
+                issue_data['number']
             )
             issue_reference = '%s/%s#%s' % (
                 parsed_email.github_owner,
                 parsed_email.github_repo,
-                issue.number
+                issue_data['number']
             )
             html_url = '<a href="%s">%s</a>' % (
                 text_url,
@@ -879,7 +882,7 @@ class EventHandler:
             )
             email_subject = SUBJECT_TEMPLATE.substitute(
                 subject=parsed_email.subject,
-                issue_number=issue.number)
+                issue_number=issue_data['number'])
 
             # TODO : what do we do if the inbound email had CCs?
 
@@ -1003,13 +1006,16 @@ class EventHandler:
 
         text_email_body = "%s writes:\n%s" % (author, stripped_comment)
 
-        html_comment = github3.markdown(
-            stripped_comment,
-            mode='gfm',
-            context='%s/%s' % (
-                message['repository']['owner']['login'],
-                message['repository']['name'])
+        status, html_comment = self.gh.markdown.post(
+            body={
+                'text': stripped_comment,
+                'mode': 'gfm',
+                'context': '%s/%s' % (
+                    message['repository']['owner']['login'],
+                    message['repository']['name'])
+            }
         )
+
         html_email_body = (
             '<a href="https://github.com/{username}">@{username}</a> writes :'
             '<br>\n{html_comment}'.format(username=author,
