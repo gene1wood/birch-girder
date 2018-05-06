@@ -13,7 +13,7 @@ import zipfile
 import yaml
 import boto3
 import botocore.exceptions
-import github3  # https://github3py.readthedocs.io/en/master/
+from agithub.GitHub import GitHub  # pip install agithub
 
 try:
     prompt = raw_input  # Python 2
@@ -115,11 +115,10 @@ def main():
         client = boto3.client('lambda')
         client.list_functions()
     except Exception as e:
-        print('''
-    Ensure that you have access to an AWS account and permission
-    to setup AWS SES, Lambda, SNS, S3 and IAM.
-    Error "%s"''' % repr(e))
-        exit(1)
+        raise Exception('''
+Ensure that you have access to an AWS account and permission
+to setup AWS SES, Lambda, SNS, S3 and IAM.
+Error "%s"''' % repr(e))
     valid_regions = ['us-east-1', 'us-west-2', 'eu-west-1']
     region = client.meta.region_name
     if region not in valid_regions:
@@ -147,12 +146,12 @@ def main():
         # S3 contents ses-payloads/
 
         # For recipients
-            # SES Verified domain
-            # Verification DNS record
-            # SPF record
-            # DKIM record
-            # GitHub repo : leave it
-            # GitHub webhook
+        #   SES Verified domain
+        #   Verification DNS record
+        #   SPF record
+        #   DKIM record
+        #   GitHub repo : leave it
+        #   GitHub webhook
 
         # Revoke GitHub token
 
@@ -165,7 +164,6 @@ def main():
         # IAM Lambda role with inline policies
 
         # SNS Topic
-
 
     # Check for first/early run
     client = boto3.client('lambda')
@@ -282,14 +280,19 @@ authorization token that Birch Girder will use to interact with GitHub''')
         note_url = 'http://github.com/gene1wood/birch-girder'
         scopes = ['repo']
 
-        auth = github3.authorize(
-            config['github_username'], password, scopes, note, note_url,
-            two_factor_callback=get_two_factor_code)
-        config['github_token'] = auth.token
-        print("GitHub OAuth Token (github_token) created : %s" % auth.token)
+        auth = GitHub(
+            config['github_username'], password, get_two_factor_code())
 
-    gh = github3.login(token=config['github_token'])
-    user = gh.user()
+        status, authorization_data = auth.authorizations.post(body={
+            'scopes': scopes,
+            'note': note,
+            'note_url': note_url})
+        config['github_token'] = authorization_data['token']
+        print("GitHub OAuth Token (github_token) created : %s" %
+              config['github_token'])
+
+    gh = GitHub(token=config['github_token'])
+    status, user_data = gh.user.get()
 
     # SNS Topic
     client = boto3.client('sns')
@@ -847,62 +850,64 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
                 or 'repo' not in config['recipient_list'][recipient]):
             print('Recipient %s missing owner or repo. Skipping' % recipient)
             continue
-        repo = gh.repository(config['recipient_list'][recipient]['owner'],
-                             config['recipient_list'][recipient]['repo'])
-        if repo is None:
-            if config['recipient_list'][recipient]['owner'] != user.login:
-                org = gh.organization(
-                    config['recipient_list'][recipient]['owner'])
-                if org is None:
+        repo = (
+            gh.repos[config['recipient_list'][recipient]['owner']]
+            [config['recipient_list'][recipient]['repo']])
+        status, repo_data = repo.get()
+
+        if repo_data.get('name') is None:
+            body = {
+                'name': config['recipient_list'][recipient]['repo'],
+                'private': True,
+                'auto_init': True
+            }
+            if config['recipient_list'][recipient]['owner'] != user_data['login']:
+                org = gh.orgs[config['recipient_list'][recipient]['owner']]
+                status, org_data = org.get()
+                if org_data.get('name') is None:
                     print('''
 Recipient {recipient} has repo owner of {owner} but the github_token user we're
 using is {login} and the repo doesn't yet exist. {owner} is not a GitHub
 organization so we can't create the repo. Skipping'''.format(
                         recipient=recipient,
                         owner=config['recipient_list'][recipient]['owner'],
-                        login=user.login))
+                        login=user_data['login']))
                     continue
                 else:
-                    repo = org.create_repo(
-                        name=config['recipient_list'][recipient]['repo'],
-                        private=True,
-                        auto_init=True
-                    )
+                    status, repo_data = (
+                        org.repos.post(body=body))
             else:
-                repo = gh.create_repo(
-                    name=config['recipient_list'][recipient]['repo'],
-                    private=True,
-                    auto_init=True
-                )
-            print("Created GitHub repo %s" % repo.html_url)
+                status, repo_data = gh.user.repos.post(body=body)
+            print("Created GitHub repo %s" % repo_data['html_url'])
 
         # IAM user access key
-        hooks = [x for x in repo.iter_hooks()]
-        if 'amazonsns' not in [x.name for x in hooks]:
+        status, hooks_data = repo.hooks.get()
+        if 'amazonsns' not in [x['name'] for x in hooks_data]:
             response = client.create_access_key(
                 UserName=args.github_iam_username
             )
             print('Created new Access Key for IAM user %s : %s'
                   % (args.github_iam_username,
                      response['AccessKey']['AccessKeyId']))
-            hook = repo.create_hook(
-                'amazonsns',
-                {'aws_key': response['AccessKey']['AccessKeyId'],
-                 'aws_secret': response['AccessKey']['SecretAccessKey'],
-                 'sns_region': config['sns_topic_arn'].split(':')[3],
-                 'sns_topic': config['sns_topic_arn']})
+            status, hook_data = repo.hooks.post(body={
+                'name': 'amazonsns',
+                'config': {
+                    'aws_key': response['AccessKey']['AccessKeyId'],
+                    'aws_secret': response['AccessKey']['SecretAccessKey'],
+                    'sns_region': config['sns_topic_arn'].split(':')[3],
+                    'sns_topic': config['sns_topic_arn']}})
             print('New %s webhook installed in %s with user access key %s'
-                  % (hook.name, repo.html_url,
+                  % (hook_data['name'], repo_data['html_url'],
                      response['AccessKey']['AccessKeyId']))
-
-        for hook in repo.iter_hooks():
-            if hook.name == u'amazonsns':
-                if new_event not in hook.events:
-                    events = hook.events
-                    events.append(new_event)
-                    hook.edit(events=events)
-                    print('GitHub webook "amazonsns" on repo %s configured to '
-                          'trigger on %s' % (repo.html_url, events))
+        else:
+            hook_data = next(x for x in hooks_data if x['name'] == 'amazonsns')
+        if new_event not in hook_data['events']:
+            events = hook_data['events']
+            events.append(new_event)
+            status, hook_data = repo.hooks[hook_data['id']].patch(body={
+                'events': events})
+            print('GitHub webook "amazonsns" on repo %s configured to trigger '
+                  'on %s' % (repo_data['html_url'], hook_data['events']))
 
     # Subscribe Lambda function to SNS
     client = boto3.client('sns')
