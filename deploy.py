@@ -327,31 +327,31 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
         )
         policy = json.loads(response['Policy'])
     except:
-        policy = None
-    if (policy is None
-            or statement_id not in [x['Sid'] for x in policy['Statement']]):
-        client.put_bucket_policy(
-            Bucket=config['ses_payload_s3_bucket_name'],
-            Policy='''{
-        "Version": "2008-10-17",
-        "Statement": [
+        policy = {
+            'Version': '2008-10-17',
+            'Statement': []
+        }
+    if (statement_id not in [x['Sid'] for x in policy['Statement']]):
+        policy['Statement'].append(
             {
-                "Sid": "%s",
-                "Effect": "Allow",
-                "Principal": {
-                    "Service": "ses.amazonaws.com"
+                'Sid': statement_id,
+                'Effect': 'Allow',
+                'Principal': {
+                    'Service': 'ses.amazonaws.com'
                 },
-                "Action": "s3:PutObject",
-                "Resource": "arn:aws:s3:::%s/*",
-                "Condition": {
-                    "StringEquals": {
-                        "aws:Referer": "%s"
+                'Action': 's3:PutObject',
+                'Resource': 'arn:aws:s3:::%s/*' %
+                            config['ses_payload_s3_bucket_name'],
+                'Condition': {
+                    'StringEquals': {
+                        'aws:Referer': config['sns_topic_arn'].split(':')[4]
                     }
                 }
             }
-        ]
-    }''' % (statement_id, config['ses_payload_s3_bucket_name'],
-                config['sns_topic_arn'].split(':')[4])
+        )
+        client.put_bucket_policy(
+            Bucket=config['ses_payload_s3_bucket_name'],
+            Policy=json.dumps(policy)
         )
         print('Bucket policy for %s created'
               % config['ses_payload_s3_bucket_name'])
