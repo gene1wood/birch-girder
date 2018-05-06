@@ -125,6 +125,7 @@ Error "%s"''' % repr(e))
         # http://docs.aws.amazon.com/ses/latest/DeveloperGuide/regions.html#region-endpoints
         print('Please set your AWS region to one of %s' % valid_regions)
         exit(1)
+    account_id = boto3.client('sts').get_caller_identity()['Account']
 
     if args.clean:
         pass
@@ -195,16 +196,10 @@ Example : Example Corporation''')
         config['provider_name'] = provider_name
 
     if 'ses_payload_s3_bucket_name' not in config:
+        config['ses_payload_s3_bucket_name'] = 'birch-girder-%s' % account_id
         print('''
 AWS S3 Bucket Name
-This will be the name of the AWS S3 bucket that stores, temporarily, the
-inbound email body. AWS S3 bucket names must be unique across all AWS accounts
-in the world, so you'll have to pick a bucket name.
-Example : birch-girder-example-corporation''')
-        bucket_name = prompt('Enter the AWS S3 bucket name: ')
-        if not bucket_name:
-            return
-        config['ses_payload_s3_bucket_name'] = bucket_name
+Setting the bucket name to %s''' % config['ses_payload_s3_bucket_name'])
 
     if 'github_username' not in config:
         print('''
