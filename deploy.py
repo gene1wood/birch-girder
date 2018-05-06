@@ -906,19 +906,20 @@ organization so we can't create the repo. Skipping'''.format(
 
     # Subscribe Lambda function to SNS
     client = boto3.client('sns')
-    response_iterator = client.get_paginator('list_subscriptions').paginate()
+    response_iterator = client.get_paginator(
+        'list_subscriptions_by_topic').paginate(
+        TopicArn=config['sns_topic_arn'])
     subscriptions = [item for sublist in
                      [x['Subscriptions'] for x in response_iterator]
                      for item in sublist]
     if lambda_function_arn not in [x['Endpoint'] for x in subscriptions
-                                   if x['TopicArn'] == config['sns_topic_arn']
-                                   and x['Protocol'] == 'lambda']:
+                                   if x['Protocol'] == 'lambda']:
         response = client.subscribe(
             TopicArn=config['sns_topic_arn'],
             Protocol='lambda',
             Endpoint=lambda_function_arn
         )
-        print('Birch Girder subscribed to GitHub Webhook SNS Topic  : %s'
+        print('Birch Girder subscribed to GitHub Webhook SNS Topic : %s'
               % response['SubscriptionArn'])
 
 
