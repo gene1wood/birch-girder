@@ -10,9 +10,9 @@ import argparse
 import tempfile
 import zipfile
 
-import yaml
+import yaml  # pip install PyYAML
 import boto3
-import botocore.exceptions
+from botocore.exceptions import ClientError
 from agithub.GitHub import GitHub  # pip install agithub
 
 END_COLOR = '\033[0m'
@@ -325,7 +325,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
     client = boto3.client('s3')
     try:
         client.head_bucket(Bucket=config['ses_payload_s3_bucket_name'])
-    except botocore.exceptions.ClientError:
+    except ClientError:
         response = client.create_bucket(
             Bucket=config['ses_payload_s3_bucket_name'],
             CreateBucketConfiguration={
