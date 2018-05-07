@@ -259,13 +259,15 @@ type continue below, otherwise hit enter'''
         response = client.describe_active_receipt_rule_set()
         if response['Metadata']['Name'] != args.ses_rule_set_name:
             print('''
-The SES Rule Set Name is set to {new}. Currently a different SES Rule Set is
-active called {existing}. By continuing, whatever rules are defined in
-{existing} will stop affecting inbound email and only the new Birch Girder
-rules will affect inbound email. Would you like to continue and make this
-change or stop and change the Rule Set Name that Birch Girder will use from
-{new} to {existing} so that both the existing rules and the new
-Birch Girder rules will affect inbound email?'''.format(
+The SES Rule Set Name is set to {new}.
+Currently a different SES Rule Set is active called {existing}.
+By continuing, whatever rules are defined in {existing}
+will stop affecting inbound email and only the new Birch Girder rules will
+affect inbound email. Would you like to continue and make this change or stop
+and change the Rule Set Name that Birch Girder will use from
+{new} to {existing}
+so that both the existing rules and the new Birch Girder rules will affect
+inbound email?'''.format(
                 new=args.ses_rule_set_name,
                 existing=response['Metadata']['Name']))
             response = prompt('[continue/stop]')
@@ -462,10 +464,8 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
                     green_print('Verification of %s initiated' % domain)
                     # TODO : Add DMARC?
                     # http://docs.aws.amazon.com/ses/latest/DeveloperGuide/dmarc.html
-                    print('''
-To verify this domain create a DNS record in the {domain} domain with the 
-name "_amazonses.{domain}" and the value "{token}"
-
+                    print('''To verify this domain create a DNS record in the {domain} domain with
+the name "_amazonses.{domain}" and the value "{token}"
 The record in the {zone} zone would look like this:
 
 {token_txt_record}    IN    TXT    "{token}"
@@ -486,7 +486,6 @@ Create a DNS MX record so inbound email destined for {domain} is
 delivered to AWS SES. The MX record in the {zone} zone would look like this:
 
 {record}    IN    MX    10    inbound-smtp.{region}.amazonaws.com.
-
 '''.format(
                         domain=domain,
                         token=token,
@@ -506,8 +505,8 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
             identities_that_matter.append(
                 domain if domain in identities else recipient)
     if verifications_initiated:
-        print("Aborting while you complete email/domain verifications. Run "
-              "this again when they're complete")
+        print('''Aborting while you complete email/domain verifications. Run this again when
+they're complete''')
         return
     response = client.get_identity_verification_attributes(
         Identities=identities_that_matter
