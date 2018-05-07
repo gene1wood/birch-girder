@@ -893,7 +893,7 @@ they're complete''')
         if repo_data.get('name') is None:
             body = {
                 'name': config['recipient_list'][recipient]['repo'],
-                'private': True,
+                'private': config['recipient_list'][recipient].get('repo_private', False),
                 'auto_init': True
             }
             if config['recipient_list'][recipient]['owner'] != user_data['login']:
@@ -913,6 +913,12 @@ organization so we can't create the repo. Skipping'''.format(
                         org.repos.post(body=body))
             else:
                 status, repo_data = gh.user.repos.post(body=body)
+            if status == 422:
+                print("Recipient %s has repo_private set to True but this "
+                      "GitHub user is free and doesn't support private repos. "
+                      "Either change to a paid GitHub user or set repo_private"
+                      "to False" % recipient)
+                return
             green_print("Created GitHub repo %s" % repo_data['html_url'])
 
         # IAM user access key
