@@ -15,11 +15,16 @@ import boto3
 import botocore.exceptions
 from agithub.GitHub import GitHub  # pip install agithub
 
-try:
-    prompt = raw_input  # Python 2
-except NameError:
-    prompt = input  # Python 3
+END_COLOR = '\033[0m'
+GREEN_COLOR = '\033[92m'
+BLUE_COLOR = '\033[94m'
 
+try:
+    # Python 2
+    prompt = lambda x: raw_input('%s%s%s : ' % (BLUE_COLOR, x, END_COLOR))
+except NameError:
+    # Python 3
+    prompt = lambda x: input('%s%s%s : ' % (BLUE_COLOR, x, END_COLOR))
 
 class Config(collections.MutableMapping):
     def __init__(self, filename, *args, **kwargs):
@@ -66,8 +71,16 @@ def plugin_path_type(path):
 def get_two_factor_code():
     code = ''
     while not code:
-        code = prompt('Enter 2FA code: ')
+        code = prompt('Enter 2FA code')
     return code
+
+
+def green_print(data):
+    print(GREEN_COLOR + data + END_COLOR)
+
+
+def color_getpass(prompt):
+    return getpass('%s%s%s : ' % (BLUE_COLOR, prompt, END_COLOR))
 
 
 def main():
@@ -190,7 +203,7 @@ Provider Name
 Your provider name is the name of your organization to be displayed in the
 suffix of emails sent.
 Example : Example Corporation''')
-        provider_name = prompt('Enter the provider name : ')
+        provider_name = prompt('Enter the provider name')
         if not provider_name:
             return
         config['provider_name'] = provider_name
@@ -206,7 +219,7 @@ Setting the bucket name to %s''' % config['ses_payload_s3_bucket_name'])
 GitHub Username
 What GitHub user would you like Birch Girder to act as. This user needs access
 to all repos which you'd like Birch Girder to manage.''')
-        github_username = prompt('Enter the GitHub username : ')
+        github_username = prompt('Enter the GitHub username')
         if not github_username:
             return
         config['github_username'] = github_username
@@ -238,7 +251,7 @@ If you'd like to continue setting up Birch Girder because you're
 waiting on AWS support getting your account out of SES sandbox,
 type continue below, otherwise hit enter'''
               % response['Max24HourSend'])
-        ses_bypass = prompt('Continue? [continue]: ')
+        ses_bypass = prompt('Continue? [continue]')
         if ses_bypass.lower() not in ['continue', 'y', 'yes', 'c']:
             return
 
@@ -255,7 +268,7 @@ change or stop and change the Rule Set Name that Birch Girder will use from
 Birch Girder rules will affect inbound email?'''.format(
                 new=args.ses_rule_set_name,
                 existing=response['Metadata']['Name']))
-            response = prompt('[continue/stop]: ')
+            response = prompt('[continue/stop]')
             if response.lower() not in ['continue', 'c']:
                 return
     except:
@@ -264,9 +277,10 @@ Birch Girder rules will affect inbound email?'''.format(
     # GitHub Token
     if 'github_token' not in config:
         print('''
-GitHub user password\nWe'll use this password to generate a GitHub
-authorization token that Birch Girder will use to interact with GitHub''')
-        password = getpass('Enter the GitHub password for %s: '
+GitHub user password
+We'll use this password to generate a GitHub authorization token that Birch
+Girder will use to interact with GitHub''')
+        password = color_getpass('Enter the GitHub password for %s'
                            % config['github_username'])
         if not password:
             return
@@ -283,7 +297,7 @@ authorization token that Birch Girder will use to interact with GitHub''')
             'note': note,
             'note_url': note_url})
         config['github_token'] = authorization_data['token']
-        print("GitHub OAuth Token (github_token) created : %s" %
+        green_print("GitHub OAuth Token (github_token) created : %s" %
               config['github_token'])
 
     gh = GitHub(token=config['github_token'])
@@ -318,7 +332,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
                 'LocationConstraint': config['sns_region']
             }
         )
-        print('Bucket %s created' % response['Location'])
+        green_print('Bucket %s created' % response['Location'])
 
     statement_id = 'GiveSESPermissionToWriteEmail'
     try:
@@ -353,7 +367,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
             Bucket=config['ses_payload_s3_bucket_name'],
             Policy=json.dumps(policy)
         )
-        print('Bucket policy for %s created'
+        green_print('Bucket policy for %s created'
               % config['ses_payload_s3_bucket_name'])
 
     lifecycle_id = 'DeleteSESEmailPayloadsAfter7Days'
@@ -388,7 +402,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
                 ]
             }
         )
-        print('Bucket lifecycle configuration for %s applied to bucket'
+        green_print('Bucket lifecycle configuration for %s applied to bucket'
               % config['ses_payload_s3_bucket_name'])
 
     # SES
@@ -399,7 +413,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
         client.update_account_sending_enabled(
             Enabled=True
         )
-        print('Email sending has been enabled.')
+        green_print('Email sending has been enabled.')
 
     response_iterator = client.get_paginator('list_identities').paginate()
     identities = [item for sublist in
@@ -415,19 +429,19 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
                 % recipient)
             response = prompt(
                 'Would you like to verify the email address %s or the '
-                'domain %s [email/domain]: '
+                'domain %s [email/domain]'
                 % (recipient, recipient.split('@')[1]))
             if response.lower() in ['email', recipient]:
                 client.verify_email_identity(
                     EmailAddress=recipient
                 )
-                print('Initiating verification of %s' % recipient)
+                green_print('Initiating verification of %s' % recipient)
                 verifications_initiated = True
                 break
             elif response.lower() in ['domain', domain]:
                 response = prompt(
                     'Would you like to host the zone %s in route53 (for '
-                    '$0.50/month) or on your own [route53/myself]: ' % domain)
+                    '$0.50/month) or on your own [route53/myself]' % domain)
                 if response.lower() in ['route53', 'r']:
                     print('Route53 support in Birch Girder is not yet '
                           'available.')
@@ -445,7 +459,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
                         '{key}._domainkey{suffix}    IN    CNAME    {key}.dkim.amazonses.com.'.format(
                             key=x, suffix=suffix)
                         for x in response['DkimTokens']])
-                    print('Verification of %s initiated' % domain)
+                    green_print('Verification of %s initiated' % domain)
                     # TODO : Add DMARC?
                     # http://docs.aws.amazon.com/ses/latest/DeveloperGuide/dmarc.html
                     print('''
@@ -622,7 +636,7 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
             x['Arn'] for x in iam_roles
             if x['RoleName'] == args.lambda_iam_role_name)
     else:
-        print("Creating role %s" % args.lambda_iam_role_name)
+        green_print("Creating role %s" % args.lambda_iam_role_name)
         response = client.create_role(
             RoleName=args.lambda_iam_role_name,
             AssumeRolePolicyDocument=assume_role_policy_document
@@ -638,7 +652,8 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
                      for item in sublist]
     for policy_name in policies:
         if policy_name not in role_policies:
-            print("Attaching policy %s" % policy_name)
+            green_print("Attaching policy %s to role %s" %
+                        (policy_name, args.lambda_iam_role_name))
             client.put_role_policy(
                 RoleName=args.lambda_iam_role_name,
                 PolicyName=policy_name,
@@ -696,7 +711,7 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
                 ZipFile=origin_file.read()
             )
             lambda_function_arn = response['FunctionArn']
-            print('Lambda function updated : %s'
+            green_print('Lambda function updated : %s'
                   % lambda_function_arn)
         else:
             response = client.create_function(
@@ -710,7 +725,7 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
             )
             # TODO : Wait for function to exist https://github.com/boto/boto3/issues/1382
             lambda_function_arn = response['FunctionArn']
-            print('Lambda function created : %s'
+            green_print('Lambda function created : %s'
                   % lambda_function_arn)
 
     # SES permission to invoke Lambda function
@@ -730,7 +745,8 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
             Principal='ses.amazonaws.com',
             SourceAccount=lambda_function_arn.split(':')[4]
         )
-        print('Permission %s added' % statement_id)
+        green_print('Permission %s added to Lambda function %s' %
+                    (statement_id, args.lambda_function_name))
 
     # SNS permission to invoke Lambda function
     statement_id = 'GiveGithubWebhookSNSTopicPermissionToInvokeFunction'
@@ -744,7 +760,8 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
             Principal='sns.amazonaws.com',
             SourceArn=config['sns_topic_arn']
         )
-        print('Permission %s added' % statement_id)
+        green_print('Permission %s added to Lambda function %s' %
+                    (statement_id, args.lambda_function_name))
 
     # SES receipt rule
     client = boto3.client('ses')
@@ -759,7 +776,7 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
                 client.create_receipt_rule_set(
                     RuleSetName=args.ses_rule_set_name
                 )
-                print('SES Rule Set %s created' % args.ses_rule_set_name)
+                green_print('SES Rule Set %s created' % args.ses_rule_set_name)
                 rule_set_created = True
             else:
                 time.sleep(2)
@@ -788,13 +805,13 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
                 'ScanEnabled': True
             }
         )
-        print('SES Rule %s created in Rule Set' % args.ses_rule_name)
+        green_print('SES Rule %s created in Rule Set' % args.ses_rule_name)
     response = client.describe_active_receipt_rule_set()
     if response['Metadata']['Name'] != args.ses_rule_set_name:
         client.set_active_receipt_rule_set(
             RuleSetName=args.ses_rule_set_name
         )
-        print('SES Rule Set %s set as active' % args.ses_rule_set_name)
+        green_print('SES Rule Set %s set as active' % args.ses_rule_set_name)
 
     # GitHub IAM user
     policy_document = '''{
@@ -820,7 +837,7 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
         response = client.create_user(
             UserName=args.github_iam_username
         )
-        print('IAM user %s created' % response['User']['UserName'])
+        green_print('IAM user %s created' % response['User']['UserName'])
 
     policy_name = 'PublishToGithubWebhookSNSTopic'
     response_iterator = client.get_paginator('list_user_policies').paginate(
@@ -835,7 +852,7 @@ delivered to AWS SES. The MX record in the {zone} zone would look like this:
             PolicyName=policy_name,
             PolicyDocument=policy_document
         )
-        print('IAM policy %s applied to user %s'
+        green_print('IAM policy %s applied to user %s'
               % (policy_name, args.github_iam_username))
 
     # GitHub webhooks
@@ -873,7 +890,7 @@ organization so we can't create the repo. Skipping'''.format(
                         org.repos.post(body=body))
             else:
                 status, repo_data = gh.user.repos.post(body=body)
-            print("Created GitHub repo %s" % repo_data['html_url'])
+            green_print("Created GitHub repo %s" % repo_data['html_url'])
 
         # IAM user access key
         status, hooks_data = repo.hooks.get()
@@ -881,7 +898,7 @@ organization so we can't create the repo. Skipping'''.format(
             response = client.create_access_key(
                 UserName=args.github_iam_username
             )
-            print('Created new Access Key for IAM user %s : %s'
+            green_print('Created new Access Key for IAM user %s : %s'
                   % (args.github_iam_username,
                      response['AccessKey']['AccessKeyId']))
             status, hook_data = repo.hooks.post(body={
@@ -891,7 +908,7 @@ organization so we can't create the repo. Skipping'''.format(
                     'aws_secret': response['AccessKey']['SecretAccessKey'],
                     'sns_region': config['sns_topic_arn'].split(':')[3],
                     'sns_topic': config['sns_topic_arn']}})
-            print('New %s webhook installed in %s with user access key %s'
+            green_print('New %s webhook installed in %s with user access key %s'
                   % (hook_data['name'], repo_data['html_url'],
                      response['AccessKey']['AccessKeyId']))
         else:
@@ -901,7 +918,7 @@ organization so we can't create the repo. Skipping'''.format(
             events.append(new_event)
             status, hook_data = repo.hooks[hook_data['id']].patch(body={
                 'events': events})
-            print('GitHub webook "amazonsns" on repo %s configured to trigger '
+            green_print('GitHub webook "amazonsns" on repo %s configured to trigger '
                   'on %s' % (repo_data['html_url'], hook_data['events']))
 
     # Subscribe Lambda function to SNS
@@ -919,7 +936,7 @@ organization so we can't create the repo. Skipping'''.format(
             Protocol='lambda',
             Endpoint=lambda_function_arn
         )
-        print('Birch Girder subscribed to GitHub Webhook SNS Topic : %s'
+        green_print('Birch Girder subscribed to GitHub Webhook SNS Topic : %s'
               % response['SubscriptionArn'])
 
 
