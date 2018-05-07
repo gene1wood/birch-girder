@@ -99,8 +99,8 @@ def main():
         help='Name of the IAM role to be used by Lambda '
              '(default: birch-girder)')
     parser.add_argument(
-        '--ses-rule-set-name', default='birch-girder-ruleset',
-        help='Name of the SES ruleset (default: birch-girder-ruleset)')
+        '--ses-rule-set-name', default='default-rule-set',
+        help='Name of the SES ruleset (default: default-rule-set)')
     parser.add_argument(
         '--ses-rule-name', default='birch-girder-rule',
         help='Name of the SES rule to create (default: birch-girder-rule)')
