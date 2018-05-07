@@ -647,7 +647,14 @@ they're complete''')
             RoleName=args.lambda_iam_role_name,
             AssumeRolePolicyDocument=assume_role_policy_document
         )
-        # TODO : Wait for Role to exist https://github.com/boto/boto3/issues/1381
+        # https://github.com/boto/boto3/issues/1381
+        while True:
+            try:
+                client.get_role(RoleName=args.lambda_iam_role_name)
+                break
+            except ClientError:
+                time.sleep(2)
+
         lambda_iam_role_arn = response['Role']['Arn']
 
     response_iterator = client.get_paginator('list_role_policies').paginate(
@@ -708,10 +715,13 @@ they're complete''')
         zip_file.close()
         origin_file.seek(0)
         client = boto3.client('lambda')
-        # TODO : Support pagination https://github.com/boto/boto3/issues/1357
-        response = client.list_functions()
+        response_iterator = client.get_paginator(
+            'list_functions').paginate()
+        functions = [item for sublist in
+                     [x['Functions'] for x in response_iterator]
+                     for item in sublist]
         if args.lambda_function_name in [x['FunctionName'] for x
-                                         in response['Functions']]:
+                                         in functions]:
             response = client.update_function_code(
                 FunctionName=args.lambda_function_name,
                 ZipFile=origin_file.read()
@@ -729,7 +739,14 @@ they're complete''')
                 Description='Birch Girder',
                 Timeout=30
             )
-            # TODO : Wait for function to exist https://github.com/boto/boto3/issues/1382
+            # https://github.com/boto/boto3/issues/1382
+            while True:
+                try:
+                    client.get_function(FunctionName=args.lambda_function_name)
+                    break
+                except ClientError:
+                    time.sleep(2)
+
             lambda_function_arn = response['FunctionArn']
             green_print('Lambda function created : %s'
                   % lambda_function_arn)
