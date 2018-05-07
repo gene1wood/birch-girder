@@ -291,13 +291,20 @@ Girder will use to interact with GitHub''')
         note_url = 'http://github.com/gene1wood/birch-girder'
         scopes = ['repo']
 
-        auth = GitHub(
-            config['github_username'], password, get_two_factor_code())
-
+        auth = GitHub(config['github_username'], password)
         status, authorization_data = auth.authorizations.post(body={
             'scopes': scopes,
             'note': note,
             'note_url': note_url})
+        if (status == 401 and 'required' in
+                dict(auth.getheaders()).get('x-github-otp')):
+            auth = GitHub(config['github_username'], password, get_two_factor_code())
+            #  'x-github-otp': 'required; sms',
+            status, authorization_data = auth.authorizations.post(body={
+                'scopes': scopes,
+                'note': note,
+                'note_url': note_url})
+
         config['github_token'] = authorization_data['token']
         green_print("GitHub OAuth Token (github_token) created : %s" %
               config['github_token'])
