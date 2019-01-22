@@ -718,7 +718,6 @@ class EventHandler:
         :return:
         """
         # https://gist.github.com/gene1wood/26fbae0e2388b02d6292
-        # https://github3py.readthedocs.io/en/master/examples/oauth.html
 
         if len(self.event['Records']) > 1:
             raise Exception(
