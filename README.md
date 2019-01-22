@@ -221,7 +221,7 @@ GitHub webook "amazonsns" on repo https://github.com/example-corp/finance config
 1. Send an email to the recipient you've setup, in our example `finance@support.example.com`
 2. Go check if a new issue is created in the associated repository, in our
    example https://github.com/example-corp/finance
-3. Confirm that you received a response email acknowledging reciept of your
+3. Confirm that you received a response email acknowledging receipt of your
    email. In our example it would be sent by `Example Corp Finance Department <finance@support.example.com>`
 4. In the newly created GitHub issue, add a comment and mention in the comment
    the GitHub user that Birch Girder is running as, in our example `octocat`.
@@ -234,7 +234,8 @@ GitHub webook "amazonsns" on repo https://github.com/example-corp/finance config
 If you encounter a problem you can fix it and just re-run `deploy.py`. It can
 be run as many times as you want as each time is just attempts to converge your
 deployed setup in GitHub and AWS with what you've defined in your `config.yaml`
-MX 
+file
+ 
 # Usage
 
 ## Create a new issue
@@ -243,7 +244,7 @@ Send an email to any email in the `recipient_list` and that email will be added
 as an issue to the repository associated with the email address in the
 `recipient_list`
 
-## Reply to the requestor from a GitHub ticket
+## Reply to the requester from a GitHub ticket
 
 Add a comment in a GitHub issue created by Birch Girder and include in the
 comment somewhere an `@` mention of the Birch Girder GitHub user. For example
@@ -252,7 +253,7 @@ Birch Girder is configured to use was `octocat`
 
 ## Add comments to a ticket via email
 
-The original requestor can reply to the initial reply email that they received
+The original requester can reply to the initial reply email that they received
 or any other emails from Birch Girder and their reply will be incorporated
 into the ticket they're replying to as a comment.
 
@@ -318,7 +319,7 @@ as a comment to the existing issue.
   * Looks and sees that the email is a reply to an existing issue
     * If it is not a reply and is instead a new issue
       * Calls the GitHub API and creates a new GitHub issue with the content of the email
-      * Calls AWS SES to send an email response back to the user acknowledging reciept of their email
+      * Calls AWS SES to send an email response back to the user acknowledging receipt of their email
     * Otherwise if it is a reply to an existing issue
       * Calls the GitHub API and adds a comment to the existing GitHub issue
 
