@@ -14,6 +14,7 @@ import yaml  # pip install PyYAML
 import boto3
 from botocore.exceptions import ClientError
 from agithub.GitHub import GitHub  # pip install agithub
+import agithub.base
 
 END_COLOR = '\033[0m'
 GREEN_COLOR = '\033[92m'
@@ -62,6 +63,20 @@ class Config(collections.MutableMapping):
             pass
 
 
+class HookIO(agithub.base.API):
+    def __init__(self, api_key=None, *args, **kwargs):
+        extra_headers = dict()
+        if api_key is not None:
+            extra_headers['hookio-private-key'] = api_key
+        props = agithub.base.ConnectionProperties(
+            api_url='hook.io',
+            secure_http=True,
+            extra_headers=extra_headers
+        )
+        self.setClient(agithub.base.Client(*args, **kwargs))
+        self.setConnectionProperties(props)
+
+
 def plugin_path_type(path):
     if not os.path.isdir(path):
         raise argparse.ArgumentTypeError("%s isn't a directory" % path)
@@ -81,6 +96,35 @@ def green_print(data):
 
 def color_getpass(prompt):
     return getpass('%s%s%s : ' % (BLUE_COLOR, prompt, END_COLOR))
+
+
+def generate_password(length):
+    charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    random_bytes = os.urandom(length)
+    len_charset = len(charset)
+    indices = [int(len_charset * (ord(byte) / 256.0)) for byte in
+               random_bytes]
+    return "".join([charset[index] for index in indices])
+
+
+def update_hookio_env_vars(hook_io, new_env_vars, current_env_vars=None):
+    if current_env_vars is None:
+        status, current_env_vars = hook_io.env.get()
+
+    data = dict(current_env_vars)
+    for k, v in new_env_vars.items():
+        data[k] = v
+
+    if data != current_env_vars:
+        status, result = hook_io.env.post(body={'env': data})
+        if status != 200 or result.get('status') != 'updated':
+            print("Got error {} when attempting to set hook.io env vars".format(
+                result))
+        else:
+            if len(current_env_vars) < len(data):
+                green_print("Created new hook.io env variables")
+            else:
+                green_print("Updated hook.io env variables")
 
 
 def main():
@@ -112,6 +156,9 @@ def main():
         '--lambda-archive-filename', metavar='FILENAME.ZIP',
         help='Path to the newly generated lambda zip file (default: temporary '
              'file)')
+    parser.add_argument(
+        '--hookio-service-name', default='birch-girder-webhook',
+        help='Name of the hook.io service (default: birch-girder-webhook)')
     parser.add_argument(
         '--plugins-path', default='plugins', type=plugin_path_type,
         help='Path to the plugins directory (default: plugins/)')
@@ -196,6 +243,26 @@ Error "%s"''' % repr(e))
 No recipient_list in config. Continuing with setup but not
 setting up any recipients. Later, configure recipients in the config and run
 deploy again.''')
+        if 'hook_io_api_key' not in config:
+            print('''
+Your hook.io API key isn't set yet in the config. You don't yet have any
+recipients defined so you don't need it yet but you will before you setup
+any recipients. Follow the README and create a hook.io account and put your
+hook.io API key in the config.''')
+
+    if len(config['recipient_list']) > 0 and 'hook_io_api_key' not in config:
+        print('''
+Your hook.io API key isn't set yet in the config. Follow the README and create
+a hook.io account and put your hook.io API key in the config.''')
+        exit(1)
+
+    hook_io = HookIO(api_key=config['hook_io_api_key'])
+    status, hook_io_user = hook_io.keys.checkAccess.get(
+        hook_private_key=config['hook_io_api_key'])
+    if not hook_io_user['hasAccess']:
+        print('''
+Your hook.io API key isn't valid. Make sure the key was set up correctly.''')
+        exit(1)
 
     if 'provider_name' not in config:
         print('''
@@ -886,6 +953,47 @@ they're complete''')
         green_print('IAM policy %s applied to user %s'
               % (policy_name, args.github_iam_username))
 
+    # hook.io service
+    hook_io_source_filename = 'hook.io/hook.io.py'
+    with open(hook_io_source_filename) as f:
+        service_details = {
+            'name': args.hookio_service_name,
+            'owner': hook_io_user['user']['name'],
+            'source': f.read(),
+            'language': 'python3'
+        }
+
+    # list all hook.io services
+    status, hook_io_services = hook_io[hook_io_user['user']['name']].post(
+        body={'query': {'owner': hook_io_user['user']['name']}})
+
+    if args.hookio_service_name not in [x['name'] for x in hook_io_services]:
+        # create service
+        status, create_result = hook_io.new.post(body=service_details)
+        if create_result.get('status') != 'created':
+            raise Exception("Failed to create hook.io service : {}".format(
+                create_result))
+        else:
+            green_print("Created new hook.io service {}".format(
+                args.hookio_service_name))
+    else:
+        # update service
+        status, service_source = hook_io[hook_io_user['user']['name']][
+            args.hookio_service_name].source.get()
+        if service_details['source'] != service_source:
+            status, update_result = hook_io.admin.post(body=service_details)
+            if update_result.get('status') != 'updated':
+                raise Exception("Failed to update hook.io service : {}".format(
+                    update_result))
+            else:
+                green_print("Updated hook.io service {}".format(
+                    args.hookio_service_name))
+
+    # hook.io env vars fetch
+    status, env_vars = hook_io.env.get()
+    repo_secret_map = json.loads(
+        env_vars.get('github-webhook-secret-map', '{}'))
+
     # GitHub webhooks
     new_event = u'issue_comment'
     for recipient in config['recipient_list']:
@@ -927,34 +1035,96 @@ organization so we can't create the repo. Skipping'''.format(
                 return
             green_print("Created GitHub repo %s" % repo_data['html_url'])
 
-        # IAM user access key
+        # GitHub repo secret map
         status, hooks_data = repo.hooks.get()
-        if 'amazonsns' not in [x['name'] for x in hooks_data]:
-            response = client.create_access_key(
-                UserName=args.github_iam_username
-            )
-            green_print('Created new Access Key for IAM user %s : %s'
-                  % (args.github_iam_username,
-                     response['AccessKey']['AccessKeyId']))
-            status, hook_data = repo.hooks.post(body={
-                'name': 'amazonsns',
+        hook_url = 'https://hook.io/{}/{}'.format(
+            hook_io_user['user']['name'], args.hookio_service_name)
+        owner_repo_key = '{}/{}'.format(
+            config['recipient_list'][recipient]['owner'],
+            config['recipient_list'][recipient]['repo'])
+        if hook_url not in [x['config'].get('url') for x in hooks_data
+                            if x['name'] == 'web']:
+            # hook.io URL not configured in this repo's GitHub webhooks
+
+            # generate GitHub webhook secret
+            repo_secret_map.set_default(owner_repo_key, generate_password(64))
+            # create GitHub webhook
+            status, hook = repo.hooks.post(body={
+                'name': 'web',
+                'events': [new_event],
                 'config': {
-                    'aws_key': response['AccessKey']['AccessKeyId'],
-                    'aws_secret': response['AccessKey']['SecretAccessKey'],
-                    'sns_region': config['sns_topic_arn'].split(':')[3],
-                    'sns_topic': config['sns_topic_arn']}})
-            green_print('New %s webhook installed in %s with user access key %s'
-                  % (hook_data['name'], repo_data['html_url'],
-                     response['AccessKey']['AccessKeyId']))
+                    'url': hook_url,
+                    'secret': repo_secret_map[owner_repo_key]}})
+            if status == 201:
+                green_print('New webhook installed in %s'
+                      % repo_data['html_url'])
+            else:
+                raise Exception("Failed to create new GitHub webhook : {}".format(hook))
         else:
-            hook_data = next(x for x in hooks_data if x['name'] == 'amazonsns')
-        if new_event not in hook_data['events']:
-            events = hook_data['events']
-            events.append(new_event)
-            status, hook_data = repo.hooks[hook_data['id']].patch(body={
-                'events': events})
-            green_print('GitHub webook "amazonsns" on repo %s configured to trigger '
-                  'on %s' % (repo_data['html_url'], hook_data['events']))
+            # GitHub webhook is already setup with hook.io URL
+            hook = next(x for x in hooks_data if x['name'] == 'web'
+                        and x['config'].get('url') == hook_url)
+
+        # update GitHub webhook
+        new_hook_settings = {}
+        if owner_repo_key not in repo_secret_map:
+            # hook.io env var is missing this repo's GitHub webhook secret
+            # generate a new GitHub webhook secret
+            repo_secret_map[owner_repo_key] = generate_password(64)
+            if 'config' not in new_hook_settings:
+                new_hook_settings['config'] = {}
+            new_hook_settings['config']['secret'] = repo_secret_map[
+                owner_repo_key]
+        if new_event not in hook['events']:
+            new_hook_settings['add_events'] = new_event
+        if len(new_hook_settings) > 0:
+            # GitHub webhook configuration needs to be updated
+            status, result = repo.hooks[hook['id']].patch(
+                body=new_hook_settings)
+            if status == 200:
+                green_print('GitHub webhook updated in %s'
+                            % repo_data['html_url'])
+            else:
+                raise Exception('Failed to update GitHub webhook in %s' %
+                      repo_data['html_url'])
+
+        # hook.io env vars set
+        orig = env_vars.get('github-webhook-secret-map', '{}')
+        new = json.dumps(
+            repo_secret_map, sort_keys=True, separators=(',', ':'))
+        if orig != new:
+            # update hook.io env vars
+            update_hookio_env_vars(
+                hook_io,
+                {'github-webhook-secret-map': new},
+                env_vars)
+
+    new_env_vars = {
+        'sns-topic-arn': config['sns_topic_arn']
+    }
+
+    # IAM user access key
+    if ('aws-access-key-id' not in env_vars
+            or 'aws-secret-access-key' not in env_vars):
+        # Create AWS access_key for hook.io to use
+        response = client.create_access_key(
+            UserName=args.github_iam_username
+        )
+        green_print(
+            'Created new Access Key for IAM user %s : %s' % (
+                args.github_iam_username,
+                response['AccessKey']['AccessKeyId']))
+
+        new_env_vars['aws-access-key-id'] = response['AccessKey']['AccessKeyId']
+        new_env_vars['aws-secret-access-key'] = response['AccessKey'][
+            'SecretAccessKey']
+
+    # hook.io env vars set continued
+    update_hookio_env_vars(
+        hook_io,
+        new_env_vars,
+        env_vars
+    )
 
     # Subscribe Lambda function to SNS
     client = boto3.client('sns')

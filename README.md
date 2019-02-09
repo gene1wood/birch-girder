@@ -18,6 +18,7 @@ for free (as in beer).
 * A free Amazon Web Services (AWS) account. This requires giving AWS a credit
   card but as long as you send and receive 1000 emails or less per month it's
   free ([$0.10 for every additional 1000 emails](https://aws.amazon.com/ses/pricing/))
+* A free hook.io account
 * A domain name for which you can have all email destined to addresses in that
   domain, sent to AWS. This can be a subdomain of an existing domain. If you have
   no domain name you can [buy one from AWS for $9/year](http://docs.aws.amazon.com/Route53/latest/DeveloperGuide/domain-register.html)
@@ -113,11 +114,39 @@ IAM policy PublishToGithubWebhookSNSTopic applied to user github-sns-publisher
 Birch Girder subscribed to GitHub Webhook SNS Topic  : arn:aws:sns:us-west-2:012345678901:GithubWebhookTopic:01234567-89ab-cdef-0123-456789abcdef
 ```
 
+### Setup hook.io
+
+Now that Birch Girder is setup, you'll next want to setup email recipients and
+GitHub repositories but before you do so you need to setup your hook.io account.
+
+hook.io enables you to integrate your GitHub repositories with AWS SNS (and is
+necessary now that GitHub [has retired GitHub Services](https://developer.github.com/changes/2018-04-25-github-services-deprecation/))
+
+1. [Create a hook.io account](https://hook.io/login) either by logging in with
+   GitHub or with email address.
+2. [Create an API key](https://hook.io/keys#generate-keys) that we'll use to
+   setup hook.io
+   * Name : birch-girder-access-key (or whatever you want)
+   * Roles : Check `Select None` then scroll all the way down
+   * Custom Roles : In the text box paste in
+   
+         hook::update,hook::create,env::read,env::write,keys::checkAccess
+   * Click `Add Key`
+3. At the bottom of the page in the `Your API Keys` section, find your api key
+   in the `hook_private_key` field, and copy and paste it into your 
+   `config.yaml` in a `hook_io_api_key` line. You can add it anywhere you like
+   in the file. It would look something like this
+   
+       provider_name: Example Corporation
+       github_username: Octocat
+       hook_io_api_key: 12345678-90ab-cdef-1234-567890123456
+
 ## Add recipients
 
-Now that Birch Girder is setup, you'll want to configure email recipients and
-associate them with GitHub repositories. This is done by adding recipients to
-your `config.yaml` file.
+Now you're ready to configure email recipients and associate them with GitHub
+repositories. 
+
+This is done by adding recipients to your `config.yaml` file.
 
 ```yaml
 recipient_list:

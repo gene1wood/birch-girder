@@ -7,6 +7,8 @@ sns_region: us-west-2
 github_token: 0123456789abcdef0123456789abcdef01234567
 # The GitHub username of the user that Birch Girder acts as
 github_username: octocat
+# The hook.io API key that deploy.py will use to configure hook.io
+hook_io_api_key: 12345678-90ab-cdef-1234-567890123456
 # The AWS S3 bucket name that temporarily stores email
 ses_payload_s3_bucket_name: birch-girder-example-corporation
 # The directory in the S3 bucket to store email in
