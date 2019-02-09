@@ -849,6 +849,14 @@ they're complete''')
                 "%s"
             ],
             "Effect": "Allow"
+        },
+        {
+            "Action": [
+                "sns:ListTopics"
+            ],
+            "Sid": "ListSNSTopics",
+            "Resource": "*",
+            "Effect": "Allow"
         }
     ]
 }''' % config['sns_topic_arn']
