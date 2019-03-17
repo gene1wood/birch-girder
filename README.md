@@ -130,7 +130,7 @@ necessary now that GitHub [has retired GitHub Services](https://developer.github
    * Roles : Check `Select None` then scroll all the way down
    * Custom Roles : In the text box paste in
    
-         hook::update,hook::create,env::read,env::write,keys::checkAccess
+         hook::update,hook::create,hook::destroy,env::read,env::write,keys::checkAccess
    * Click `Add Key`
 3. At the bottom of the page in the `Your API Keys` section, find your api key
    in the `hook_private_key` field, and copy and paste it into your 
