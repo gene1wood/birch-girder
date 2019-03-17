@@ -9,10 +9,10 @@ from getpass import getpass
 import argparse
 import tempfile
 import zipfile
+import io
 
 import yaml  # pip install PyYAML
 import boto3
-from botocore.exceptions import ClientError
 from agithub.GitHub import GitHub  # pip install agithub
 import agithub.base
 
@@ -115,16 +115,24 @@ def update_hookio_env_vars(hook_io, new_env_vars, current_env_vars=None):
     for k, v in new_env_vars.items():
         data[k] = v
 
-    if data != current_env_vars:
+    created_vars = set(data.keys()) - set(current_env_vars.keys())
+    updated_vars = [x for x in new_env_vars.keys() if new_env_vars[x] != data.get(x)]
+    deleted_vars = [k for k, v in new_env_vars.items() if v is None]
+
+    if created_vars or updated_vars or deleted_vars:
         status, result = hook_io.env.post(body={'env': data})
         if status != 200 or result.get('status') != 'updated':
             print("Got error {} when attempting to set hook.io env vars".format(
                 result))
         else:
-            if len(current_env_vars) < len(data):
-                green_print("Created new hook.io env variables")
-            else:
-                green_print("Updated hook.io env variables")
+            message = ''
+            if created_vars:
+                message += 'Created {} '.format(created_vars)
+            if updated_vars:
+                message += 'Updated {} '.format(updated_vars)
+            if deleted_vars:
+                message += 'Deleted {}'.format(deleted_vars)
+            green_print("hook.io env variables changed : {}".format(message))
 
 
 def main():
@@ -162,10 +170,6 @@ def main():
     parser.add_argument(
         '--plugins-path', default='plugins', type=plugin_path_type,
         help='Path to the plugins directory (default: plugins/)')
-    parser.add_argument(
-        '--clean', action='store_true',
-        help='Clean up all created Birch Girder resources by deleting and '
-             'removing them. This feature is not yet implemented')
 
     args = parser.parse_args()
     config = Config(args.config)
@@ -186,45 +190,6 @@ Error "%s"''' % repr(e))
         print('Please set your AWS region to one of %s' % valid_regions)
         exit(1)
     account_id = boto3.client('sts').get_caller_identity()['Account']
-
-    if args.clean:
-        pass
-
-        # Not yet implemented
-
-        # SNS Alert Topic
-
-        # SES Rule
-
-        # SES Ruleset if empty
-
-        # S3 bucket : leave it
-
-        # S3 bucket policy statement GiveSESPermissionToWriteEmail
-
-        # S3 bucket lifecycle id DeleteSESEmailPayloadsAfter7Days
-
-        # S3 contents ses-payloads/
-
-        # For recipients
-        #   SES Verified domain
-        #   Verification DNS record
-        #   SPF record
-        #   DKIM record
-        #   GitHub repo : leave it
-        #   GitHub webhook
-
-        # Revoke GitHub token
-
-        # IAM GitHub user with inline policies and associated access keys
-
-        # SNS subscription of topic to lambda function
-
-        # Lambda function with policy
-
-        # IAM Lambda role with inline policies
-
-        # SNS Topic
 
     # Check for first/early run
     client = boto3.client('lambda')
@@ -401,14 +366,14 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
     client = boto3.client('s3')
     try:
         client.head_bucket(Bucket=config['ses_payload_s3_bucket_name'])
-    except ClientError:
+    except client.exceptions.ClientError:
         response = client.create_bucket(
             Bucket=config['ses_payload_s3_bucket_name'],
             CreateBucketConfiguration={
                 'LocationConstraint': config['sns_region']
             }
         )
-        green_print('Bucket %s created' % response['Location'])
+        green_print('AWS S3 Bucket %s created' % response['Location'])
 
     statement_id = 'GiveSESPermissionToWriteEmail'
     try:
@@ -443,7 +408,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
             Bucket=config['ses_payload_s3_bucket_name'],
             Policy=json.dumps(policy)
         )
-        green_print('Bucket policy for %s created'
+        green_print('AWS S3 Bucket policy for %s created'
               % config['ses_payload_s3_bucket_name'])
 
     lifecycle_id = 'DeleteSESEmailPayloadsAfter7Days'
@@ -478,7 +443,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
                 ]
             }
         )
-        green_print('Bucket lifecycle configuration for %s applied to bucket'
+        green_print('AWS S3 Bucket lifecycle configuration for %s applied to bucket'
               % config['ses_payload_s3_bucket_name'])
 
     # SES
@@ -489,7 +454,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
         client.update_account_sending_enabled(
             Enabled=True
         )
-        green_print('Email sending has been enabled.')
+        green_print('AWS SES Email sending has been enabled.')
 
     response_iterator = client.get_paginator('list_identities').paginate()
     identities = [item for sublist in
@@ -511,7 +476,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
                 client.verify_email_identity(
                     EmailAddress=recipient
                 )
-                green_print('Initiating verification of %s' % recipient)
+                green_print('Initiating AWS SES verification of %s' % recipient)
                 verifications_initiated = True
                 break
             elif response.lower() in ['domain', domain]:
@@ -535,7 +500,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
                         '{key}._domainkey{suffix}    IN    CNAME    {key}.dkim.amazonses.com.'.format(
                             key=x, suffix=suffix)
                         for x in response['DkimTokens']])
-                    green_print('Verification of %s initiated' % domain)
+                    green_print('AWS SES verification of %s initiated' % domain)
                     # TODO : Add DMARC?
                     # http://docs.aws.amazon.com/ses/latest/DeveloperGuide/dmarc.html
                     print('''To verify this domain create a DNS record in the {domain} domain with
@@ -709,7 +674,7 @@ they're complete''')
             x['Arn'] for x in iam_roles
             if x['RoleName'] == args.lambda_iam_role_name)
     else:
-        green_print("Creating role %s" % args.lambda_iam_role_name)
+        green_print("Creating AWS IAM role %s" % args.lambda_iam_role_name)
         response = client.create_role(
             RoleName=args.lambda_iam_role_name,
             AssumeRolePolicyDocument=assume_role_policy_document
@@ -719,7 +684,7 @@ they're complete''')
             try:
                 client.get_role(RoleName=args.lambda_iam_role_name)
                 break
-            except ClientError:
+            except client.exceptions.ClientError:
                 time.sleep(2)
 
         lambda_iam_role_arn = response['Role']['Arn']
@@ -732,40 +697,82 @@ they're complete''')
                      for item in sublist]
     for policy_name in policies:
         if policy_name not in role_policies:
-            green_print("Attaching policy %s to role %s" %
+            green_print("Attaching AWS IAM policy %s to AWS IAM role %s" %
                         (policy_name, args.lambda_iam_role_name))
             client.put_role_policy(
                 RoleName=args.lambda_iam_role_name,
                 PolicyName=policy_name,
                 PolicyDocument=policies[policy_name]
             )
+            while True:
+                try:
+                    client.get_role_policy(RoleName=args.lambda_iam_role_name, PolicyName=policy_name)
+                    break
+                except client.exceptions.ClientError:
+                    time.sleep(2)
 
     # Lambda function
+    init_filename = 'birch_girder/__init__.py'
+    client = boto3.client('lambda')
+    response_iterator = client.get_paginator(
+        'list_functions').paginate()
+    functions = [item for sublist in
+                 [x['Functions'] for x in response_iterator]
+                 for item in sublist]
+    if args.lambda_function_name not in [x['FunctionName'] for x
+                                         in functions]:
+        in_memory_data = io.BytesIO()
+        zip_file = zipfile.ZipFile(in_memory_data, 'w')
+        zip_file.writestr(
+            init_filename, 'def lambda_handler(event, context):\n  pass\n')
+        zip_file.close()
+        while True:
+            try:
+                response = client.create_function(
+                    FunctionName=args.lambda_function_name,
+                    Runtime='python2.7',
+                    Role=lambda_iam_role_arn,
+                    Handler='__init__.lambda_handler',
+                    Code={'ZipFile': in_memory_data.getvalue()},
+                    Description='Birch Girder',
+                    Timeout=30
+                )
+                break
+            except client.exceptions.InvalidParameterValueException as e:
+                if ('The role defined for the function cannot be assumed'
+                        in str(e)):
+                    # Timing issue where the role exists but Lambda doesn't see
+                    # it yet
+                    time.sleep(2)
+                    continue
+                else:
+                    raise
+
+        # https://github.com/boto/boto3/issues/1382
+        while True:
+            try:
+                client.get_function(FunctionName=args.lambda_function_name)
+                break
+            except client.exceptions.ClientError:
+                time.sleep(2)
+
+        lambda_function_arn = response['FunctionArn']
+        green_print('AWS Lambda function created : %s'
+                    % lambda_function_arn)
+        in_memory_data.close()
+
     zip_file_name = 'artifacts/birch-girder.zip'
-    if args.lambda_archive_filename is not None:
-        if (os.path.exists(args.lambda_archive_filename)
-                and args.lambda_archive_filename.endswith('.zip')):
-            print("Deleting existing archive %s"
-                  % args.lambda_archive_filename)
-            os.remove(args.lambda_archive_filename)
-        with open(args.lambda_archive_filename, 'w') as f:
-            pass
-        os.chmod(args.lambda_archive_filename, 0600)
 
-    with (open(args.lambda_archive_filename, 'r+')
-          if args.lambda_archive_filename is not None
-          else tempfile.TemporaryFile(suffix='.zip')) as origin_file:
-        with open(zip_file_name) as f:
-            origin_file.write(f.read())
+    in_memory_data = io.BytesIO()
+    with open(zip_file_name, 'rb') as f:
+        in_memory_data = io.BytesIO(f.read())
 
-        zip_file = zipfile.ZipFile(origin_file, 'a')
-
+    with zipfile.ZipFile(in_memory_data, 'w') as zip_file:
         config_file = zipfile.ZipInfo('config.yaml', time.localtime()[:6])
         config_file.compress_type = zipfile.ZIP_DEFLATED
         config_file.external_attr = 0644 << 16L
         zip_file.writestr(config_file, open(args.config).read())
 
-        init_filename = 'birch_girder/__init__.py'
         zip_file.write(
             init_filename,
             '__init__.py',
@@ -779,44 +786,15 @@ they're complete''')
                 arcname,
                 zipfile.ZIP_DEFLATED)
 
-        zip_file.close()
-        origin_file.seek(0)
-        client = boto3.client('lambda')
-        response_iterator = client.get_paginator(
-            'list_functions').paginate()
-        functions = [item for sublist in
-                     [x['Functions'] for x in response_iterator]
-                     for item in sublist]
-        if args.lambda_function_name in [x['FunctionName'] for x
-                                         in functions]:
-            response = client.update_function_code(
-                FunctionName=args.lambda_function_name,
-                ZipFile=origin_file.read()
-            )
-            lambda_function_arn = response['FunctionArn']
-            green_print('Lambda function updated : %s'
-                  % lambda_function_arn)
-        else:
-            response = client.create_function(
-                FunctionName=args.lambda_function_name,
-                Runtime='python2.7',
-                Role=lambda_iam_role_arn,
-                Handler='__init__.lambda_handler',
-                Code={'ZipFile': origin_file.read()},
-                Description='Birch Girder',
-                Timeout=30
-            )
-            # https://github.com/boto/boto3/issues/1382
-            while True:
-                try:
-                    client.get_function(FunctionName=args.lambda_function_name)
-                    break
-                except ClientError:
-                    time.sleep(2)
+    response = client.update_function_code(
+        FunctionName=args.lambda_function_name,
+        ZipFile=in_memory_data.getvalue()
+    )
+    lambda_function_arn = response['FunctionArn']
+    green_print('AWS Lambda function updated : %s'
+                % lambda_function_arn)
 
-            lambda_function_arn = response['FunctionArn']
-            green_print('Lambda function created : %s'
-                  % lambda_function_arn)
+    in_memory_data.close()
 
     # SES permission to invoke Lambda function
     statement_id = 'GiveSESPermissionToInvokeFunction'
@@ -835,7 +813,7 @@ they're complete''')
             Principal='ses.amazonaws.com',
             SourceAccount=lambda_function_arn.split(':')[4]
         )
-        green_print('Permission %s added to Lambda function %s' %
+        green_print('Permission %s added to AWS Lambda function %s' %
                     (statement_id, args.lambda_function_name))
 
     # SNS permission to invoke Lambda function
@@ -850,7 +828,7 @@ they're complete''')
             Principal='sns.amazonaws.com',
             SourceArn=config['sns_topic_arn']
         )
-        green_print('Permission %s added to Lambda function %s' %
+        green_print('Permission %s added to AWS Lambda function %s' %
                     (statement_id, args.lambda_function_name))
 
     # SES receipt rule
@@ -866,7 +844,7 @@ they're complete''')
                 client.create_receipt_rule_set(
                     RuleSetName=args.ses_rule_set_name
                 )
-                green_print('SES Rule Set %s created' % args.ses_rule_set_name)
+                green_print('AWS SES Rule Set %s created' % args.ses_rule_set_name)
                 rule_set_created = True
             else:
                 time.sleep(2)
@@ -895,13 +873,14 @@ they're complete''')
                 'ScanEnabled': True
             }
         )
-        green_print('SES Rule %s created in Rule Set' % args.ses_rule_name)
+        green_print('AWS SES Rule %s created in Rule Set %s' % (
+            args.ses_rule_name, args.ses_rule_set_name))
     response = client.describe_active_receipt_rule_set()
     if response['Metadata']['Name'] != args.ses_rule_set_name:
         client.set_active_receipt_rule_set(
             RuleSetName=args.ses_rule_set_name
         )
-        green_print('SES Rule Set %s set as active' % args.ses_rule_set_name)
+        green_print('AWS SES Rule Set %s set as active' % args.ses_rule_set_name)
 
     # GitHub IAM user
     policy_document = '''{
@@ -935,7 +914,7 @@ they're complete''')
         response = client.create_user(
             UserName=args.github_iam_username
         )
-        green_print('IAM user %s created' % response['User']['UserName'])
+        green_print('AWS IAM user %s created' % response['User']['UserName'])
 
     policy_name = 'PublishToGithubWebhookSNSTopic'
     response_iterator = client.get_paginator('list_user_policies').paginate(
@@ -950,7 +929,7 @@ they're complete''')
             PolicyName=policy_name,
             PolicyDocument=policy_document
         )
-        green_print('IAM policy %s applied to user %s'
+        green_print('AWS IAM policy %s applied to user %s'
               % (policy_name, args.github_iam_username))
 
     # hook.io service
@@ -974,7 +953,7 @@ they're complete''')
             raise Exception("Failed to create hook.io service : {}".format(
                 create_result))
         else:
-            green_print("Created new hook.io service {}".format(
+            green_print("Created new hook.io service : {}".format(
                 args.hookio_service_name))
     else:
         # update service
@@ -991,15 +970,19 @@ they're complete''')
 
     # hook.io env vars fetch
     status, env_vars = hook_io.env.get()
-    repo_secret_map = json.loads(
-        env_vars.get('github-webhook-secret-map', '{}'))
+    repo_secret_map = env_vars.get('github-webhook-secret-map', {})
+    if type(repo_secret_map) != dict:
+        repo_secret_map = json.loads(repo_secret_map)
 
     # GitHub webhooks
     new_event = u'issue_comment'
     for recipient in config['recipient_list']:
+        print('Processing https://github.com/{}/{}'.format(
+            config['recipient_list'][recipient]['owner'],
+            config['recipient_list'][recipient]['repo']))
         if ('owner' not in config['recipient_list'][recipient]
                 or 'repo' not in config['recipient_list'][recipient]):
-            print('Recipient %s missing owner or repo. Skipping' % recipient)
+            print('  Recipient %s missing owner or repo. Skipping' % recipient)
             continue
         repo = (
             gh.repos[config['recipient_list'][recipient]['owner']]
@@ -1016,8 +999,7 @@ they're complete''')
                 org = gh.orgs[config['recipient_list'][recipient]['owner']]
                 status, org_data = org.get()
                 if org_data.get('name') is None:
-                    print('''
-Recipient {recipient} has repo owner of {owner} but the github_token user we're
+                    print('''  Recipient {recipient} has repo owner of {owner} but the github_token user we're
 using is {login} and the repo doesn't yet exist. {owner} is not a GitHub
 organization so we can't create the repo. Skipping'''.format(
                         recipient=recipient,
@@ -1030,13 +1012,14 @@ organization so we can't create the repo. Skipping'''.format(
             else:
                 status, repo_data = gh.user.repos.post(body=body)
             if status == 422:
-                print("Got error {} when attempting to create new GitHub repo {}".format(
+                print("  Got error {} when attempting to create new GitHub repo {}".format(
                     status, config['recipient_list'][recipient]['repo']))
                 return
-            green_print("Created GitHub repo %s" % repo_data['html_url'])
+            green_print("  Created GitHub repo %s" % repo_data['html_url'])
 
         # GitHub repo secret map
-        status, hooks_data = repo.hooks.get()
+        repo_hooks = repo.hooks
+        status, hooks_data = repo_hooks.get()
         hook_url = 'https://hook.io/{}/{}'.format(
             hook_io_user['user']['name'], args.hookio_service_name)
         owner_repo_key = '{}/{}'.format(
@@ -1047,16 +1030,16 @@ organization so we can't create the repo. Skipping'''.format(
             # hook.io URL not configured in this repo's GitHub webhooks
 
             # generate GitHub webhook secret
-            repo_secret_map.set_default(owner_repo_key, generate_password(64))
+            repo_secret_map.setdefault(owner_repo_key, generate_password(64))
             # create GitHub webhook
-            status, hook = repo.hooks.post(body={
+            status, hook = repo_hooks.post(body={
                 'name': 'web',
                 'events': [new_event],
                 'config': {
                     'url': hook_url,
                     'secret': repo_secret_map[owner_repo_key]}})
             if status == 201:
-                green_print('New webhook installed in %s'
+                green_print('  New GitHub webhook installed in repo %s'
                       % repo_data['html_url'])
             else:
                 raise Exception("Failed to create new GitHub webhook : {}".format(hook))
@@ -1073,20 +1056,21 @@ organization so we can't create the repo. Skipping'''.format(
             repo_secret_map[owner_repo_key] = generate_password(64)
             if 'config' not in new_hook_settings:
                 new_hook_settings['config'] = {}
-            new_hook_settings['config']['secret'] = repo_secret_map[
-                owner_repo_key]
+            new_hook_settings['config'] = {
+                'secret': repo_secret_map[owner_repo_key],
+                'url': hook_url}
         if new_event not in hook['events']:
             new_hook_settings['add_events'] = new_event
         if len(new_hook_settings) > 0:
             # GitHub webhook configuration needs to be updated
-            status, result = repo.hooks[hook['id']].patch(
+            status, result = repo_hooks[hook['id']].patch(
                 body=new_hook_settings)
             if status == 200:
-                green_print('GitHub webhook updated in %s'
+                green_print('  GitHub webhook updated in %s'
                             % repo_data['html_url'])
             else:
-                raise Exception('Failed to update GitHub webhook in %s' %
-                      repo_data['html_url'])
+                raise Exception('Failed to update GitHub webhook in %s : %s' %
+                                (repo_data['html_url'], result))
 
         # hook.io env vars set
         orig = env_vars.get('github-webhook-secret-map', '{}')
@@ -1111,7 +1095,7 @@ organization so we can't create the repo. Skipping'''.format(
             UserName=args.github_iam_username
         )
         green_print(
-            'Created new Access Key for IAM user %s : %s' % (
+            'Created new Access Key for AWS IAM user %s : %s' % (
                 args.github_iam_username,
                 response['AccessKey']['AccessKeyId']))
 
@@ -1141,7 +1125,7 @@ organization so we can't create the repo. Skipping'''.format(
             Protocol='lambda',
             Endpoint=lambda_function_arn
         )
-        green_print('Birch Girder subscribed to GitHub Webhook SNS Topic : %s'
+        green_print('Birch Girder AWS Lambda function subscribed to AWS SNS Topic : %s'
               % response['SubscriptionArn'])
 
 
