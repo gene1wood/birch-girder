@@ -1,0 +1,19 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+
+[packages]
+botocore = ">=1.8.8"
+boto3 = "*"
+agithub = "*"
+python-dateutil = "*"
+pyzmail = "*"
+beautifulsoup4 = "*"
+PyYAML = "*"
+email_reply_parser = "*"
+
+[requires]
+python_version = "2.7"
