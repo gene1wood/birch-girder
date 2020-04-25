@@ -1,1 +1,3 @@
+configs/
 birch_girder/config.yaml
+setup-test-environment.sh
