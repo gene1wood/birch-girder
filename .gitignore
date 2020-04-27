@@ -1,3 +1,4 @@
 configs/
 birch_girder/config.yaml
 setup-test-environment.sh
+artifacts/.hash_version_map.json

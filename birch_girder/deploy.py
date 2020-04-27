@@ -10,11 +10,16 @@ import argparse
 import tempfile
 import zipfile
 import io
+import base64
+import hashlib
 
 import yaml  # pip install PyYAML
 import boto3
 from agithub.GitHub import GitHub  # pip install agithub
 import agithub.base
+from base64 import b64encode
+from nacl import encoding, public
+
 
 END_COLOR = '\033[0m'
 GREEN_COLOR = '\033[92m'
@@ -58,7 +63,7 @@ class Config(collections.MutableMapping):
     def load(self):
         try:
             with open(self.filename) as f:
-                self.update(**yaml.load(f.read()))
+                self.update(**yaml.load(f.read(), Loader=yaml.SafeLoader))
         except:
             pass
 
@@ -84,6 +89,20 @@ def color_getpass(prompt):
     return getpass('%s%s%s : ' % (BLUE_COLOR, prompt, END_COLOR))
 
 
+def get_paginated_results(product, action, key, credentials=None, args=None):
+    args = {} if args is None else args
+    credentials = {} if credentials is None else credentials
+    return [y for sublist in [x[key] for x in boto3.client(product, **credentials).get_paginator(action).paginate(**args)] for y in sublist]
+
+
+def encrypt_github_actions_secret(public_key, secret_value):
+    """Encrypt a Unicode string using the public key."""
+    public_key = public.PublicKey(public_key.encode("utf-8"), encoding.Base64Encoder())
+    sealed_box = public.SealedBox(public_key)
+    encrypted = sealed_box.encrypt(secret_value.encode("utf-8"))
+    return b64encode(encrypted).decode("utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='''Deploy Birch Girder. This tool will build a config.yaml
@@ -91,31 +110,36 @@ def main():
         account.''')
     parser.add_argument(
         '--config', default='birch_girder/config.yaml',
-        help='Location of config.yaml (defualt : birch_girder/config.yaml)')
+        help='Location of config.yaml (default : %(default)s)')
     parser.add_argument(
         '--lambda-function-name', default='birch-girder',
-        help='Name of the AWS Lambda function (default: birch-girder)')
+        help='Name of the AWS Lambda function (default: %(default)s)')
     parser.add_argument(
         '--lambda-iam-role-name', default='birch-girder',
         help='Name of the IAM role to be used by Lambda '
-             '(default: birch-girder)')
+             '(default: %(default)s)')
     parser.add_argument(
         '--ses-rule-set-name', default='default-rule-set',
-        help='Name of the SES ruleset (default: default-rule-set)')
+        help='Name of the SES ruleset (default: %(default)s)')
     parser.add_argument(
         '--ses-rule-name', default='birch-girder-rule',
-        help='Name of the SES rule to create (default: birch-girder-rule)')
+        help='Name of the SES rule to create (default: %(default)s)')
     parser.add_argument(
         '--github-iam-username', default='github-sns-publisher',
         help='Name of the IAM user to be used by GitHub '
-             '(default: github-sns-publisher)')
+             '(default: %(default)s)')
     parser.add_argument(
         '--lambda-archive-filename', metavar='FILENAME.ZIP',
         help='Path to the newly generated lambda zip file (default: temporary '
              'file)')
     parser.add_argument(
+        '--github-action-filename',
+        default='emit-comment-to-sns-github-action.yml', metavar='FILENAME.yml',
+        help='Filename to use for the GitHub Actions workflow (default: '
+             '%(default)s)')
+    parser.add_argument(
         '--plugins-path', default='plugins', type=plugin_path_type,
-        help='Path to the plugins directory (default: plugins/)')
+        help='Path to the plugins directory (default: %(default)s)')
 
     args = parser.parse_args()
     config = Config(args.config)
@@ -382,10 +406,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
         )
         green_print('AWS SES Email sending has been enabled.')
 
-    response_iterator = client.get_paginator('list_identities').paginate()
-    identities = [item for sublist in
-                  [x['Identities'] for x in response_iterator]
-                  for item in sublist]
+    identities = get_paginated_results('ses', 'list_identities', 'Identities')
     verifications_initiated = False
     identities_that_matter = []
     for recipient in [x.lower() for x in config['recipient_list'].keys()]:
@@ -591,10 +612,7 @@ they're complete''')
   ]
 }'''
     client = boto3.client('iam')
-    response_iterator = client.get_paginator('list_roles').paginate()
-    iam_roles = [item for sublist in
-                 [x['Roles'] for x in response_iterator]
-                 for item in sublist]
+    iam_roles = get_paginated_results('iam', 'list_roles', 'Roles')
     if args.lambda_iam_role_name in [x['RoleName'] for x in iam_roles]:
         lambda_iam_role_arn = next(
             x['Arn'] for x in iam_roles
@@ -615,12 +633,9 @@ they're complete''')
 
         lambda_iam_role_arn = response['Role']['Arn']
 
-    response_iterator = client.get_paginator('list_role_policies').paginate(
-        RoleName=args.lambda_iam_role_name
-    )
-    role_policies = [item for sublist in
-                     [x['PolicyNames'] for x in response_iterator]
-                     for item in sublist]
+    role_policies = get_paginated_results(
+        'iam', 'list_role_policies', 'PolicyNames',
+        args={'RoleName': args.lambda_iam_role_name})
     for policy_name in policies:
         if policy_name not in role_policies:
             green_print("Attaching AWS IAM policy %s to AWS IAM role %s" %
@@ -637,16 +652,66 @@ they're complete''')
                 except client.exceptions.ClientError:
                     time.sleep(2)
 
+    # Lambda function layer
+    client = boto3.client('lambda')
+    zip_file_name = 'artifacts/birch-girder.zip'
+    hash_version_map_filename = 'artifacts/.hash_version_map.json'
+    layers = get_paginated_results('lambda', 'list_layers', 'Layers')
+    layer_name = '%s-layer' % args.lambda_function_name
+    publish_layer = False
+    with open(zip_file_name) as f:
+        try:
+            hash_map_file = open(hash_version_map_filename)
+            hash_map = json.load(hash_map_file)
+            hash_map_file.close()
+        except IOError:
+            hash_map = {}
+
+        digest = hashlib.sha256(f.read()).hexdigest()
+        f.seek(0)
+        if layer_name not in [x['LayerName'] for x in layers]:
+            # Create a new Lambda layer
+            publish_layer = True
+            function_needs_update = True
+        else:
+            function_needs_update = False
+            if digest not in hash_map:
+                # layer zip has changed and should be published
+                publish_layer = True
+                function_needs_update = True
+            else:
+                # layer zip hasn't changed from a published version
+                layer_version_arn = hash_map[digest]
+                try:
+                    response = client.get_function(
+                        FunctionName=args.lambda_function_name)
+                    if layer_version_arn not in [x['Arn'] for x in response['Configuration'].get('Layers', [])]:
+                        # Lambda function doesn't include the layer
+                        function_needs_update = True
+                except:
+                    # There is no lambda function
+                    pass
+        if publish_layer:
+            response = client.publish_layer_version(
+                LayerName=layer_name,
+                Description='Birch Girder supporting python packages',
+                Content={'ZipFile': f.read()},
+                CompatibleRuntimes=['python2.7'])
+            layer_version_arn = response['LayerVersionArn']
+            green_print('AWS Lambda layer published : %s'
+                        % layer_version_arn)
+            hash_map[digest] = layer_version_arn
+            with open(hash_version_map_filename, 'w') as hash_map_file:
+                json.dump(hash_map, hash_map_file)
+            function_needs_update = True
+
+
     # Lambda function
     init_filename = 'birch_girder/__init__.py'
-    client = boto3.client('lambda')
-    response_iterator = client.get_paginator(
-        'list_functions').paginate()
-    functions = [item for sublist in
-                 [x['Functions'] for x in response_iterator]
-                 for item in sublist]
+    functions = get_paginated_results('lambda', 'list_functions', 'Functions')
     if args.lambda_function_name not in [x['FunctionName'] for x
                                          in functions]:
+        # Lambda function doesn't exist, create it
         in_memory_data = io.BytesIO()
         zip_file = zipfile.ZipFile(in_memory_data, 'w')
         zip_file.writestr(
@@ -661,7 +726,8 @@ they're complete''')
                     Handler='__init__.lambda_handler',
                     Code={'ZipFile': in_memory_data.getvalue()},
                     Description='Birch Girder',
-                    Timeout=30
+                    Timeout=30,
+                    Layers=[layer_version_arn]
                 )
                 break
             except client.exceptions.InvalidParameterValueException as e:
@@ -686,12 +752,18 @@ they're complete''')
         green_print('AWS Lambda function created : %s'
                     % lambda_function_arn)
         in_memory_data.close()
-
-    zip_file_name = 'artifacts/birch-girder.zip'
+    else:
+        # Lambda function already exists, update it
+        if function_needs_update:
+            response = client.update_function_configuration(
+                FunctionName=args.lambda_function_name,
+                Layers=[layer_version_arn]
+            )
+            green_print('AWS Lambda function configuration updated with new Lambda layer : %s'
+                        % response['FunctionArn'])
+        pass
 
     in_memory_data = io.BytesIO()
-    with open(zip_file_name, 'rb') as f:
-        in_memory_data = io.BytesIO(f.read())
 
     with zipfile.ZipFile(in_memory_data, 'w') as zip_file:
         config_file = zipfile.ZipInfo('config.yaml', time.localtime()[:6])
@@ -833,9 +905,7 @@ they're complete''')
     ]
 }''' % config['sns_topic_arn']
     client = boto3.client('iam')
-    response_iterator = client.get_paginator('list_users').paginate()
-    iam_users = [item for sublist in [x['Users'] for x in response_iterator]
-                 for item in sublist]
+    iam_users = get_paginated_results('iam', 'list_users', 'Users')
     if args.github_iam_username not in [x['UserName'] for x in iam_users]:
         response = client.create_user(
             UserName=args.github_iam_username
@@ -843,12 +913,9 @@ they're complete''')
         green_print('AWS IAM user %s created' % response['User']['UserName'])
 
     policy_name = 'PublishToGithubWebhookSNSTopic'
-    response_iterator = client.get_paginator('list_user_policies').paginate(
-        UserName=args.github_iam_username
-    )
-    user_policies = [item for sublist in
-                     [x['PolicyNames'] for x in response_iterator]
-                     for item in sublist]
+    user_policies = get_paginated_results(
+        'iam', 'list_user_policies', 'PolicyNames',
+        args={'UserName': args.github_iam_username})
     if policy_name not in user_policies:
         client.put_user_policy(
             UserName=args.github_iam_username,
@@ -858,36 +925,34 @@ they're complete''')
         green_print('AWS IAM policy %s applied to user %s'
               % (policy_name, args.github_iam_username))
 
-    # GitHub webhooks
-    new_event = u'issue_comment'
-    for recipient in config['recipient_list']:
-        print('Processing https://github.com/{}/{}'.format(
-            config['recipient_list'][recipient]['owner'],
-            config['recipient_list'][recipient]['repo']))
-        if ('owner' not in config['recipient_list'][recipient]
-                or 'repo' not in config['recipient_list'][recipient]):
-            print('  Recipient %s missing owner or repo. Skipping' % recipient)
+    # GitHub Actions
+    for owner, repo, repo_private in set(
+            [(config['recipient_list'][x].get('owner'),
+              config['recipient_list'][x].get('repo'),
+              config['recipient_list'][x].get('repo_private', True)) for x in config['recipient_list']]):
+
+        if owner is None or repo is None:
+            print('A recipient is missing owner or repo. Skipping')
             continue
-        repo = (
-            gh.repos[config['recipient_list'][recipient]['owner']]
-            [config['recipient_list'][recipient]['repo']])
-        status, repo_data = repo.get()
+        html_url = 'https://github.com/{}/{}'.format(owner, repo)
+        print('Processing %s' % html_url)
+        status, repo_data = gh.repos[owner][repo].get()
 
         if repo_data.get('name') is None:
             body = {
-                'name': config['recipient_list'][recipient]['repo'],
-                'private': config['recipient_list'][recipient].get('repo_private', True),
+                'name': repo,
+                'private': repo_private,
                 'auto_init': True
             }
-            if config['recipient_list'][recipient]['owner'] != user_data['login']:
-                org = gh.orgs[config['recipient_list'][recipient]['owner']]
+            if owner != user_data['login']:
+                org = gh.orgs[owner]
                 status, org_data = org.get()
                 if org_data.get('name') is None:
-                    print('''  Recipient {recipient} has repo owner of {owner} but the github_token user we're
+                    print('''  Recipient {html_url} has repo owner of {owner} but the github_token user we're
 using is {login} and the repo doesn't yet exist. {owner} is not a GitHub
 organization so we can't create the repo. Skipping'''.format(
-                        recipient=recipient,
-                        owner=config['recipient_list'][recipient]['owner'],
+                        html_url=html_url,
+                        owner=owner,
                         login=user_data['login']))
                     continue
                 else:
@@ -897,47 +962,79 @@ organization so we can't create the repo. Skipping'''.format(
                 status, repo_data = gh.user.repos.post(body=body)
             if status == 422:
                 print("  Got error {} when attempting to create new GitHub repo {}".format(
-                    status, config['recipient_list'][recipient]['repo']))
+                    status, repo))
                 return
             green_print("  Created GitHub repo %s" % repo_data['html_url'])
 
-        # IAM user access key
-        status, hooks_data = repo.hooks.get()
-        if 'amazonsns' not in [x['name'] for x in hooks_data]:
+        # GitHub Actions Secrets
+        status, secrets_data = gh.repos[owner][repo].actions.secrets.get()
+        if 'BIRCH_GIRDER_AWS_ACCESS_KEY_ID' not in [x['name'] for x in secrets_data['secrets']]:
             response = client.create_access_key(
                 UserName=args.github_iam_username
             )
             green_print('Created new Access Key for AWS IAM user %s : %s'
                   % (args.github_iam_username,
                      response['AccessKey']['AccessKeyId']))
-            status, hook_data = repo.hooks.post(body={
-                'name': 'amazonsns',
-                'config': {
-                    'aws_key': response['AccessKey']['AccessKeyId'],
-                    'aws_secret': response['AccessKey']['SecretAccessKey'],
-                    'sns_region': config['sns_topic_arn'].split(':')[3],
-                    'sns_topic': config['sns_topic_arn']}})
-            green_print('New %s webhook installed in %s with user access key %s'
-                  % (hook_data['name'], repo_data['html_url'],
-                     response['AccessKey']['AccessKeyId']))
-        else:
-            hook_data = next(x for x in hooks_data if x['name'] == 'amazonsns')
-        if new_event not in hook_data['events']:
-            events = hook_data['events']
-            events.append(new_event)
-            status, hook_data = repo.hooks[hook_data['id']].patch(body={
-                'events': events})
-            green_print('GitHub webook "amazonsns" on repo %s configured to trigger '
-                  'on %s' % (repo_data['html_url'], hook_data['events']))
+
+            status, public_key_data = gh.repos[owner][repo].actions.secrets['public-key'].get()
+
+            status, _ = gh.repos[owner][repo].actions.secrets.BIRCH_GIRDER_AWS_ACCESS_KEY_ID.put(
+                encrypted_value=encrypt_github_actions_secret(
+                    public_key_data['key'],
+                    response['AccessKey']['AccessKeyId']),
+                key_id=public_key_data['key_id']
+            )
+            status, _ = gh.repos[owner][repo].actions.secrets.BIRCH_GIRDER_AWS_SECRET_ACCESS_KEY.put(
+                encrypted_value=encrypt_github_actions_secret(
+                    public_key_data['key'],
+                    response['AccessKey']['SecretAccessKey']),
+                key_id=public_key_data['key_id']
+            )
+            status, _ = gh.repos[owner][repo].actions.secrets.BIRCH_GIRDER_SNS_TOPIC_ARN.put(
+                encrypted_value=encrypt_github_actions_secret(
+                    public_key_data['key'],
+                    config['sns_topic_arn']),
+                key_id=public_key_data['key_id']
+            )
+            status, _ = gh.repos[owner][repo].actions.secrets.BIRCH_GIRDER_SNS_TOPIC_REGION.put(
+                encrypted_value=encrypt_github_actions_secret(
+                    public_key_data['key'],
+                    config['sns_topic_arn'].split(':')[3]),
+                key_id=public_key_data['key_id']
+            )
+            green_print('New GitHub Actions secrets set')
+
+        # GitHub Actions workflow
+        status, workflow_data = gh.repos[owner][repo].contents['.github']['workflows'][args.github_action_filename].get()
+        with open('emit-comment-to-sns-github-action.yml') as f:
+            content = f.read()
+            if status == 404:
+                status, _ = gh.repos[owner][repo].contents['.github']['workflows'][args.github_action_filename].put(
+                    body={
+                        'message': 'Adding Birch Girder GitHub Actions workflow\n\nhttps://github.com/gene1wood/birch-girder',
+                        'content': base64.b64encode(content)})
+                if 200 <= status < 300:
+                    green_print('  New GitHub Actions workflow %s deployed'
+                                % (args.github_action_filename))
+                else:
+                    print("result from add %s and %s" % (status, _))
+            elif base64.b64decode(workflow_data['content']) != content:
+                status, _ = gh.repos[owner][repo].contents['.github']['workflows'][args.github_action_filename].put(
+                    body={
+                        'message': 'Updating Birch Girder GitHub Actions workflow\n\nhttps://github.com/gene1wood/birch-girder',
+                        'content': base64.b64encode(content),
+                        'sha': workflow_data['sha']})
+                if 200 <= status < 300:
+                    green_print('  GitHub Actions workflow %s updated'
+                                % (args.github_action_filename))
+                else:
+                    print("result from update %s and %s" % (status, _))
 
     # Subscribe Lambda function to SNS
     client = boto3.client('sns')
-    response_iterator = client.get_paginator(
-        'list_subscriptions_by_topic').paginate(
-        TopicArn=config['sns_topic_arn'])
-    subscriptions = [item for sublist in
-                     [x['Subscriptions'] for x in response_iterator]
-                     for item in sublist]
+    subscriptions = get_paginated_results(
+        'sns', 'list_subscriptions_by_topic', 'Subscriptions',
+        args={'TopicArn': config['sns_topic_arn']})
     if lambda_function_arn not in [x['Endpoint'] for x in subscriptions
                                    if x['Protocol'] == 'lambda']:
         response = client.subscribe(
