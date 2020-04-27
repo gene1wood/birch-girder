@@ -134,12 +134,13 @@ def logging_local_time_converter(secs):
     pst = utc.astimezone(to_zone)
     return pst.timetuple()
 
+log_level = os.getenv('LOG_LEVEL', 'INFO')
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.getLevelName(log_level))
 if len(logging.getLogger().handlers) == 0:
     logger.addHandler(logging.StreamHandler())
-logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().setLevel(logging.getLevelName(log_level))
 # fmt = "[%(levelname)s]   %(asctime)s.%(msecs)dZ  %(aws_request_id)s  %(message)s"
 fmt = "[%(levelname)s] %(asctime)s %(message)s\n"
 # datefmt = "%Y-%m-%dT%H:%M:%S"
@@ -399,22 +400,31 @@ class Email:
             if len(self.record['ses']['mail']['commonHeaders']['from']) == 1
             else ', '.join(
                 self.record['ses']['mail']['commonHeaders']['from']))
-        if len(self.record['ses']['mail']['destination']) > 1:
-            for possible_recipient in self.config['recipient_list'].keys():
-                # Assign the first matching address in recipient_list to
-                # to_address
-                # Note : It's possible we could determine the actual correct
-                #  To address from record['ses']['receipt']['recipients']
-                if possible_recipient in [
-                        x.lower() for x
-                        in self.record['ses']['mail']['destination']]:
-                    self.to_address = possible_recipient
-                    break
-        else:
-            self.to_address = (self.record['ses']['mail']
-                               ['destination'][0].lower())
+
+        logger.debug(
+            'Multiple email destinations found. Looking for an applicable one '
+            ': %s' % self.record['ses']['mail']['destination'])
+        for possible_recipient in self.config['recipient_list'].keys():
+            # Assign the first matching address in recipient_list to
+            # to_address
+            # Note : It's possible we could determine the actual correct
+            #  To address from record['ses']['receipt']['recipients']
+            if possible_recipient in [
+                    x.lower() for x
+                    in self.record['ses']['mail']['destination']]:
+                self.to_address = possible_recipient
+                logger.debug(
+                    'Found possible recipient %s in destination list %s' % (
+                        possible_recipient,
+                        self.record['ses']['mail']['destination']))
+                break
+
         if not self.to_address:
             self.to_address = self.config['recipient_list'].keys()[0].lower()
+            logger.debug(
+                'No applicable email was found in destination list so we will '
+                'use %s : %s' % (self.to_address,
+                                 self.record['ses']['mail']['destination']))
 
             self.alerter.alert(
                 "None of the 'To' addresses in '%s' were found in the"
@@ -1067,6 +1077,8 @@ to add to your request.''')
                 body={'content':'heart'},
                 headers={
                     'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
+            logger.debug('Just added a reaction to %s, got result of %s %s' % (
+                message['comment']['id'], status, reaction_data))
         else:
             logger.info('Running in dryrun mode. No email notification for %s'
                         'sent' % data['from'])

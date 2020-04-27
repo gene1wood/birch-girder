@@ -1,0 +1,41 @@
+name: Emit issue comment to AWS SNS
+on:
+  issue_comment:
+    types:
+      - created
+      - edited
+defaults:
+  run:
+    shell: bash
+jobs:
+  emit_comment:
+    name: Emit issue comment to AWS SNS
+    runs-on: ubuntu-latest
+
+    # You can uncomment this to prevent comments that are missing the Birch Girder GitHub Username mention (e.g. @octocat)
+    # from ever being sent to AWS. Filtering these is not required as the AWS Lambda function will also filter based on the presence of the string.
+    # if: contains(github.event.comment.body, ${{ secrets.GITHUB_USER_MENTION_STRING }})
+
+    timeout-minutes: 1
+    outputs:
+      message_id: ${{ steps.emit-comment.outputs.message_id }}
+    steps:
+
+      # You can uncomment this if you want to filter out a field from the GitHub issue comment
+      # This should not be used with Birch Girder as the entire issue comment event is needed
+      # - name: Extract issue comment message
+      #   id: extract-comment
+      #   run: jq -r .comment.body $GITHUB_EVENT_PATH > issue_comment_body.txt
+
+      - name: Configure AWS Credentials
+        id: configure-aws
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.BIRCH_GIRDER_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.BIRCH_GIRDER_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.BIRCH_GIRDER_SNS_TOPIC_REGION }}
+      - name: Emit issue comment to AWS SNS
+        id: emit-comment
+        env:
+          BIRCH_GIRDER_SNS_TOPIC_ARN: ${{ secrets.BIRCH_GIRDER_SNS_TOPIC_ARN }}
+        run: echo "::set-output name=message_id::$(aws sns publish --topic-arn $BIRCH_GIRDER_SNS_TOPIC_ARN --message file://$GITHUB_EVENT_PATH --output text --query MessageId)"

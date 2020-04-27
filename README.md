@@ -39,8 +39,20 @@ Notably you don't need a server to run Birch Girder.
 
 ## Initial deployment
 
+### Ensure `libsodium` is installed
+
+Ubuntu packages [libsodium23](https://packages.ubuntu.com/bionic/libsodium23)
+* `sudo apt install libsodium23`
+
+CentOS packages [libsodium](https://dl.fedoraproject.org/pub/epel/7/x86_64/Packages/l/)
+* `sudo yum install epel-release`
+* `sudo yum install libsodium`
+
+### Install Birch Girder locally
+
 ```Shell
-$ ./deploy.py
+$ pip install --user birch_girder[deploy]
+$ deploy-birch-girder
 ```
 
 ```text
