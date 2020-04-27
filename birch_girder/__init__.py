@@ -472,12 +472,11 @@ class Email:
             # The inbound email has an existing issue number in the subject
             # Add a comment to the issue
             self.subject, self.issue_number = match.groups()
-            logger.log(
-                logging.DEBUG,
+            logger.debug(
                 "Inbound email with subject \"%s\" contains existing issue "
                 "number %s and results in subject \"%s\""
                 % (stripped_subject, self.issue_number, self.subject))
-        else:
+        elif self.config.get('allow_issue_merging_by_subject', True):
             # The inbound email has no issue number in the subject
             # Search for an existing issue with a matching subject
             self.subject = stripped_subject
@@ -494,11 +493,27 @@ class Email:
             results_list = []
             for issue_search_result in data['items']:
                 if self.subject in issue_search_result['title']:
-                    results_list.append(issue_search_result['number'])
-            logger.log(
-                logging.DEBUG,
-                "Search \"%s\" triggered by inbound \"%s\" email yielded %s "
-                "results" % (gh_query, self.subject, len(results_list)))
+                    issue_data = parse_hidden_content(issue_search_result['body'])
+                    # This doesn't account for cases where there are multiple
+                    # source addresses
+                    issue_source = issue_data['source'] if 'source' in issue_data else issue_data.get('from')
+                    if self.source in issue_source:
+                        results_list.append(issue_search_result['number'])
+                    else:
+                        logger.debug(
+                            "Encountered an inbound email that has a subject "
+                            "which matches issue #%s in %s/%s but which was "
+                            "sent by %s not by %s who created the existing "
+                            "issue. Creating a new issue." % (
+                                issue_search_result['number'],
+                                self.github_owner,
+                                self.github_repo,
+                                self.source,
+                                issue_source))
+
+            logger.debug(
+                "Search \"%s\" triggered by inbound \"%s\" email matched "
+                "issue(s) %s" % (gh_query, self.subject, results_list))
 
             if len(results_list) == 0 or len(results_list) > 1:
                 # No matching issue found or multiple matching issues found
@@ -509,6 +524,11 @@ class Email:
                 # issue number
                 # Add a comment to the issue
                 self.issue_number = results_list[0]
+        else:
+            # Issue merging by matching subject is disabled, create a new issue
+            self.subject = stripped_subject
+            self.issue_number = False
+
 
     def get_email_payload(self):
         """Wait for an S3 object to exist with a filename of the SES internal
@@ -828,6 +848,7 @@ class EventHandler:
 
             email_metadata = {
                 'from': parsed_email.from_address,
+                'source': parsed_email.source,
                 'to': parsed_email.to_address,
                 'date': parsed_email.date,
                 'message_id': parsed_email.message_id
