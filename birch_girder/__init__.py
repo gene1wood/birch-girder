@@ -134,12 +134,13 @@ def logging_local_time_converter(secs):
     pst = utc.astimezone(to_zone)
     return pst.timetuple()
 
+log_level = os.getenv('LOG_LEVEL', 'INFO')
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.getLevelName(log_level))
 if len(logging.getLogger().handlers) == 0:
     logger.addHandler(logging.StreamHandler())
-logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().setLevel(logging.getLevelName(log_level))
 # fmt = "[%(levelname)s]   %(asctime)s.%(msecs)dZ  %(aws_request_id)s  %(message)s"
 fmt = "[%(levelname)s] %(asctime)s %(message)s\n"
 # datefmt = "%Y-%m-%dT%H:%M:%S"
