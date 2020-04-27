@@ -22,6 +22,7 @@ import importlib
 import pyzmail
 import bs4
 import base64
+import urllib
 
 TIME_ZONE = tz.gettz('America/Los_Angeles')
 
@@ -575,7 +576,7 @@ class Email:
                 storage_filename = "%s-%s" % (self.timestamp, filename)
                 logger.info('Adding attachment %s to repo' % filename)
                 if not self.dryrun:
-                    path = 'attachments/%s' % storage_filename
+                    path = 'attachments/%s' % urllib.quote(storage_filename)
                     status, data = (
                         self.gh.repos[self.github_owner]
                         [self.github_repo].contents[path].put(
