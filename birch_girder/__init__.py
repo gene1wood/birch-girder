@@ -297,7 +297,7 @@ def clean_sender_address(sender):
     :return: A cleaned sender email address
     """
 
-    local_part, domain = sender.split('@')
+    local_part, domain = sender.lower().split('@')
     if sender.startswith('prvs='):
         # prvs=4480132787=billing@example.com
         elements = local_part.split('=')
@@ -413,7 +413,7 @@ class Email:
             if possible_recipient in [
                     x.lower() for x
                     in self.record['ses']['mail']['destination']]:
-                self.to_address = possible_recipient
+                self.to_address = possible_recipient.lower()
                 logger.debug(
                     'Found possible recipient %s in destination list %s' % (
                         possible_recipient,
