@@ -1,6 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+import logging
+
+
 def is_matching_email(email):
     """Determine if the email was sent from john@example.net or contains the
     string BANANA CREAM PIE in the subject or was sent before 1980.
@@ -28,4 +31,5 @@ def transform_email(email):
     :return:
     """
     email.raw_subject += ' TESTING'
+    logging.debug('Subject has been appended with TESTING')
     email.parse_email()
