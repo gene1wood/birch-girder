@@ -155,7 +155,7 @@ logging.getLogger('boto3').setLevel(logging.CRITICAL)
 logging.getLogger('botocore').setLevel(logging.CRITICAL)
 logging.getLogger('requests').setLevel(logging.CRITICAL)
 logging.getLogger('urllib3').setLevel(logging.CRITICAL)
-
+logging.getLogger('email_reply_parser').setLevel(logging.CRITICAL)
 
 def get_event_type(event):
     """Determine where an event originated from based on it's contents
@@ -297,7 +297,7 @@ def clean_sender_address(sender):
     :return: A cleaned sender email address
     """
 
-    local_part, domain = sender.split('@')
+    local_part, domain = sender.lower().split('@')
     if sender.startswith('prvs='):
         # prvs=4480132787=billing@example.com
         elements = local_part.split('=')
@@ -413,7 +413,7 @@ class Email:
             if possible_recipient in [
                     x.lower() for x
                     in self.record['ses']['mail']['destination']]:
-                self.to_address = possible_recipient
+                self.to_address = possible_recipient.lower()
                 logger.debug(
                     'Found possible recipient %s in destination list %s' % (
                         possible_recipient,
@@ -790,6 +790,9 @@ class EventHandler:
         for plugin in plugin_list:
             if plugin.is_matching_email(parsed_email):
                 plugin.transform_email(parsed_email)
+                logger.debug('Email transformed by plugin %s' % plugin.__name__)
+            else:
+                logger.debug('Incoming email did not match plugin %s' % plugin.__name__)
 
         logger.info(
             "Received an email from %s to %s with a SES internal messageId "
@@ -946,6 +949,8 @@ to add to your request.''')
                     body={'content':'heart'},
                     headers={
                         'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
+                logger.info('Just added a reaction to issue #%s after sending an email' %
+                            issue_data['number'])
             else:
                 message_id = '1'
             logger.debug(
@@ -1012,7 +1017,7 @@ to add to your request.''')
             return False
         if re.search(mention_regex, message['comment']['body']) is None:
             logger.info(
-                'GitHub issue comment does not contain "%s" so it will be'
+                'GitHub issue comment does not contain "%s" so it will be '
                 'ignored' % mention)
             return False
 
@@ -1099,8 +1104,8 @@ to add to your request.''')
                 body={'content':'heart'},
                 headers={
                     'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
-            logger.debug('Just added a reaction to %s, got result of %s %s' % (
-                message['comment']['id'], status, reaction_data))
+            logger.info('Just added a reaction to a comment in issue #%s after '
+                        'sending an email' % message['comment']['id'])
         else:
             logger.info('Running in dryrun mode. No email notification for %s'
                         'sent' % data['from'])
@@ -1113,7 +1118,7 @@ def lambda_handler(event, context):
     :param context: The AWS Lambda context object
     :return:
     """
-    logger.debug('got event {}'.format(event))
+    # logger.debug('got event {}'.format(event))
     with open('config.yaml') as f:
         config = yaml.load(f.read())
     handler = EventHandler(config, event, context)

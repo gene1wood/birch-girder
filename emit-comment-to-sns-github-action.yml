@@ -12,9 +12,9 @@ jobs:
     name: Emit issue comment to AWS SNS
     runs-on: ubuntu-latest
 
-    # You can uncomment this to prevent comments that are missing the Birch Girder GitHub Username mention (e.g. @octocat)
-    # from ever being sent to AWS. Filtering these is not required as the AWS Lambda function will also filter based on the presence of the string.
-    # if: contains(github.event.comment.body, ${{ secrets.GITHUB_USER_MENTION_STRING }})
+    # If the user making the comment is the repo owner, then don't trigger Birch Girder
+    # as the only time this happens is when Birch Girder adds a comment to an issue
+    if: github.event.comment.user.login != github.repository_owner
 
     timeout-minutes: 1
     outputs:
