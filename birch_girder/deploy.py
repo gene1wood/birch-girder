@@ -274,6 +274,9 @@ Girder will use to interact with GitHub''')
         note_url = 'http://github.com/gene1wood/birch-girder'
         scopes = ['repo']
 
+        # Note this method of obtaining a token is now deprecated and stops working later in 2020
+        # https://developer.github.com/changes/2020-02-14-deprecating-oauth-auth-endpoint/
+        # TODO : Replace this with a non deprecated method
         auth = GitHub(config['github_username'], password)
         status, authorization_data = auth.authorizations.post(body={
             'scopes': scopes,
