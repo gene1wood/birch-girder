@@ -1,5 +1,5 @@
 name: Emit issue comment to AWS SNS
-on:
+'on':
   issue_comment:
     types:
       - created
@@ -11,10 +11,13 @@ jobs:
   emit_comment:
     name: Emit issue comment to AWS SNS
     runs-on: ubuntu-latest
+    env:  # These values will be replaced by deploy.py with the actual values
+      BIRCH_GIRDER_SNS_TOPIC_REGION: region-goes-here
+      BIRCH_GIRDER_SNS_TOPIC_ARN: sns-topic-arn-goes-here
 
-    # If the user making the comment is the repo owner, then don't trigger Birch Girder
+    # If the user making the comment is the bot user, then don't trigger Birch Girder
     # as the only time this happens is when Birch Girder adds a comment to an issue
-    if: github.event.comment.user.login != github.repository_owner
+    if: github.event.comment.user.login != 'bot-name-goes-here'  # This value will be replaced by deploy.py
 
     timeout-minutes: 1
     outputs:
@@ -33,9 +36,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.BIRCH_GIRDER_AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.BIRCH_GIRDER_AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.BIRCH_GIRDER_SNS_TOPIC_REGION }}
+          aws-region: ${{ env.BIRCH_GIRDER_SNS_TOPIC_REGION }}
       - name: Emit issue comment to AWS SNS
         id: emit-comment
-        env:
-          BIRCH_GIRDER_SNS_TOPIC_ARN: ${{ secrets.BIRCH_GIRDER_SNS_TOPIC_ARN }}
         run: echo "::set-output name=message_id::$(aws sns publish --topic-arn $BIRCH_GIRDER_SNS_TOPIC_ARN --message file://$GITHUB_EVENT_PATH --output text --query MessageId)"

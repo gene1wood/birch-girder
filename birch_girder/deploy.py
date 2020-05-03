@@ -100,7 +100,8 @@ def encrypt_github_actions_secret(public_key, secret_value):
     public_key = public.PublicKey(public_key.encode("utf-8"), encoding.Base64Encoder())
     sealed_box = public.SealedBox(public_key)
     encrypted = sealed_box.encrypt(secret_value.encode("utf-8"))
-    return b64encode(encrypted).decode("utf-8")
+    encoded = b64encode(encrypted).decode("utf-8")
+    return encoded
 
 
 def main():
@@ -947,7 +948,7 @@ they're complete''')
             if owner != user_data['login']:
                 org = gh.orgs[owner]
                 status, org_data = org.get()
-                if org_data.get('name') is None:
+                if org_data.get('login') is None:
                     print('''  Recipient {html_url} has repo owner of {owner} but the github_token user we're
 using is {login} and the repo doesn't yet exist. {owner} is not a GitHub
 organization so we can't create the repo. Skipping'''.format(
@@ -969,45 +970,45 @@ organization so we can't create the repo. Skipping'''.format(
         # GitHub Actions Secrets
         status, secrets_data = gh.repos[owner][repo].actions.secrets.get()
         if 'BIRCH_GIRDER_AWS_ACCESS_KEY_ID' not in [x['name'] for x in secrets_data['secrets']]:
-            response = client.create_access_key(
-                UserName=args.github_iam_username
-            )
-            green_print('Created new Access Key for AWS IAM user %s : %s'
-                  % (args.github_iam_username,
-                     response['AccessKey']['AccessKeyId']))
+            if not config.get('github_iam_user_access_key_id'):
+                response = client.create_access_key(
+                    UserName=args.github_iam_username
+                )
+                config['github_iam_user_access_key_id'] = response['AccessKey']['AccessKeyId']
+                config['github_iam_user_secret_access_key'] = response['AccessKey']['SecretAccessKey']
+                # These values are only needed by deploy not by the lambda function
+                # We could try creating two configs, one for deploy and one for
+                # lambda, or a master config with two parent dicts and only one
+                # gets written to the lambda zip at deploy time, with only the
+                # values that the lambda function needs
+                green_print('Created new Access Key for AWS IAM user %s : %s'
+                      % (args.github_iam_username,
+                         config['github_iam_user_access_key_id']))
 
             status, public_key_data = gh.repos[owner][repo].actions.secrets['public-key'].get()
 
             status, _ = gh.repos[owner][repo].actions.secrets.BIRCH_GIRDER_AWS_ACCESS_KEY_ID.put(
-                encrypted_value=encrypt_github_actions_secret(
-                    public_key_data['key'],
-                    response['AccessKey']['AccessKeyId']),
-                key_id=public_key_data['key_id']
-            )
+                body={
+                    'encrypted_value': encrypt_github_actions_secret(
+                        public_key_data['key'],
+                        config['github_iam_user_access_key_id']),
+                    'key_id': public_key_data['key_id']})
             status, _ = gh.repos[owner][repo].actions.secrets.BIRCH_GIRDER_AWS_SECRET_ACCESS_KEY.put(
-                encrypted_value=encrypt_github_actions_secret(
-                    public_key_data['key'],
-                    response['AccessKey']['SecretAccessKey']),
-                key_id=public_key_data['key_id']
-            )
-            status, _ = gh.repos[owner][repo].actions.secrets.BIRCH_GIRDER_SNS_TOPIC_ARN.put(
-                encrypted_value=encrypt_github_actions_secret(
-                    public_key_data['key'],
-                    config['sns_topic_arn']),
-                key_id=public_key_data['key_id']
-            )
-            status, _ = gh.repos[owner][repo].actions.secrets.BIRCH_GIRDER_SNS_TOPIC_REGION.put(
-                encrypted_value=encrypt_github_actions_secret(
-                    public_key_data['key'],
-                    config['sns_topic_arn'].split(':')[3]),
-                key_id=public_key_data['key_id']
-            )
-            green_print('New GitHub Actions secrets set')
+                body={
+                    'encrypted_value': encrypt_github_actions_secret(
+                        public_key_data['key'],
+                        config['github_iam_user_secret_access_key']),
+                    'key_id': public_key_data['key_id']})
+            green_print('  New GitHub Actions secrets set')
 
         # GitHub Actions workflow
         status, workflow_data = gh.repos[owner][repo].contents['.github']['workflows'][args.github_action_filename].get()
         with open('emit-comment-to-sns-github-action.yml') as f:
-            content = f.read()
+            workflow_config = yaml.load(f.read(), Loader=yaml.SafeLoader)
+            workflow_config['jobs']['emit_comment']['if'] = "github.event.comment.user.login != '{}'".format(config['github_username'])
+            workflow_config['jobs']['emit_comment']['env']['BIRCH_GIRDER_SNS_TOPIC_REGION'] = config['sns_topic_arn'].split(':')[3]
+            workflow_config['jobs']['emit_comment']['env']['BIRCH_GIRDER_SNS_TOPIC_ARN'] = config['sns_topic_arn']
+            content = yaml.dump(workflow_config, default_flow_style=False)
             if status == 404:
                 status, _ = gh.repos[owner][repo].contents['.github']['workflows'][args.github_action_filename].put(
                     body={
