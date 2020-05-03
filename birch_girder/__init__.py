@@ -1005,12 +1005,13 @@ to add to your request.''')
                 'GitHub IssueCommentEvent action in SNS message was "%s" so '
                 'it will be ignored' % message['action'])
             return False
-        if message['issue']['user']['login'] != self.config['github_username']:
+        github_usernames = self.config.get('historical_github_usernames', []) + [self.config['github_username']]
+        if message['issue']['user']['login'] not in github_usernames:
             logger.info(
                 'GitHub issue was not created by %s so it will be ignored'
                 % self.config['github_username'])
             return False
-        if message['comment']['user']['login'] == self.config['github_username']:
+        if message['comment']['user']['login'] in github_usernames:
             logger.info(
                 'GitHub issue comment was made by %s so it will be ignored'
                 % self.config['github_username'])
