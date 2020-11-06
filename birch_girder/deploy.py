@@ -7,7 +7,6 @@ import json
 import collections
 from getpass import getpass
 import argparse
-import tempfile
 import zipfile
 import io
 import base64
