@@ -1000,7 +1000,7 @@ to add to your request.''')
                         % self.event['Records'][0]['Sns']['Message'])
             return False
 
-        if message['action'] != 'created':
+        if message['action'] not in ['created', 'edited']:
             logger.info(
                 'GitHub IssueCommentEvent action in SNS message was "%s" so '
                 'it will be ignored' % message['action'])
