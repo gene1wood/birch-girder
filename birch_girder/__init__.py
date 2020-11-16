@@ -140,7 +140,7 @@ log_level = os.getenv('LOG_LEVEL', 'INFO')
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.getLevelName(log_level))
 if len(logging.getLogger().handlers) == 0:
-    logger.addHandler(logging.StreamHandler())
+    logging.getLogger().addHandler(logging.StreamHandler())
 logging.getLogger().setLevel(logging.getLevelName(log_level))
 # fmt = "[%(levelname)s]   %(asctime)s.%(msecs)dZ  %(aws_request_id)s  %(message)s"
 fmt = "[%(levelname)s] %(asctime)s %(message)s\n"
@@ -1000,7 +1000,7 @@ to add to your request.''')
                         % self.event['Records'][0]['Sns']['Message'])
             return False
 
-        if message['action'] != 'created':
+        if message['action'] not in ['created', 'edited']:
             logger.info(
                 'GitHub IssueCommentEvent action in SNS message was "%s" so '
                 'it will be ignored' % message['action'])

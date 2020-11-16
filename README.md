@@ -12,6 +12,12 @@ in a GitHub issue.
 This let's you use GitHub issues as your customer service help desk software
 for free (as in beer).
 
+* [What do you need](#what-do-you-need)
+* [Features](#features)
+* [How to deploy Birch Girder](#how-to-deploy-birch-girder)
+* [Usage](#usage)
+* [How does it work?](#how-does-it-work)
+
 # What do you need
 
 * A free GitHub user account
@@ -39,7 +45,7 @@ Notably you don't need a server to run Birch Girder.
 
 ## Initial deployment
 
-### Ensure `libsodium` is installed
+### Ensure [`libsodium`](https://doc.libsodium.org/) is installed
 
 Ubuntu packages [libsodium23](https://packages.ubuntu.com/bionic/libsodium23)
 * `sudo apt install libsodium23`
@@ -54,6 +60,9 @@ CentOS packages [libsodium](https://dl.fedoraproject.org/pub/epel/7/x86_64/Packa
 $ pip install --user birch_girder[deploy]
 $ deploy-birch-girder
 ```
+
+The deployment tool will then walk you through setting up Birch Girder. You'll
+see output like this :
 
 ```text
 No recipient_list in config. Continuing with setup but not
@@ -129,7 +138,7 @@ Birch Girder subscribed to GitHub Webhook SNS Topic  : arn:aws:sns:us-west-2:012
 
 Now that Birch Girder is setup, you'll want to configure email recipients and
 associate them with GitHub repositories. This is done by adding recipients to
-your `config.yaml` file.
+the `config.yaml` file that the deploy tool has created.
 
 ```yaml
 recipient_list:
@@ -142,7 +151,15 @@ recipient_list:
 ```
 
 Create a `recipient_list` mapping recipient email addresses to GitHub
-repositories.
+repositories and GitHub repository owners. To configure, for example, email sent
+to spoon@example.com to create issues in https://github.com/octocat/Spoon-Knife :
+
+```yaml
+recipient_list:
+  spoon@example.com:
+    owner: octocat
+    repo: Spoon-Knife
+```
 
 You can also define a `name` with the email sender name to use, for example
 
@@ -156,10 +173,11 @@ recipient_list:
 
 Would result in emails coming from `Example Corp Finance Department <finance@support.example.com>`
 
-Once you have your recipients added to your config, run `deploy.py` again
+Once you have your recipients added to your config, run `deploy-birch-girder`
+again
 
 ```shell
-$ ./deploy.py
+$ deploy-birch-girder
 ```
 
 ```
@@ -212,12 +230,12 @@ Aborting while you complete email/domain verifications. Run this again when they
 Follow the instructions returned and add the required DNS entries into the
 nameservers for your domain name.
 
-Once all the DNS records have been added, run `deploy.py` again
+Once all the DNS records have been added, run `deploy-birch-girder` again
 
 ## Finish enabling recipients
 
 ```shell
-$ ./deploy.py
+$ deploy-birch-girder
 ```
 
 ```text
@@ -243,17 +261,17 @@ GitHub webook "amazonsns" on repo https://github.com/example-corp/finance config
 
 ## What if something goes wrong
 
-If you encounter a problem you can fix it and just re-run `deploy.py`. It can
-be run as many times as you want as each time is just attempts to converge your
-deployed setup in GitHub and AWS with what you've defined in your `config.yaml`
-file
+If you encounter a problem you can fix it and just re-run `deploy-birch-girder`. 
+It can be run as many times as you want as each time is just attempts to 
+converge your deployed setup in GitHub and AWS with what you've defined in your
+`config.yaml` file.
  
 # Usage
 
 ## Create a new issue
 
-Send an email to any email in the `recipient_list` and that email will be added
-as an issue to the repository associated with the email address in the
+Send an email to any email address in the `recipient_list` and that email will
+be added as an issue to the repository associated with the email address in the
 `recipient_list`
 
 ## Reply to the requester from a GitHub ticket
@@ -266,7 +284,7 @@ Birch Girder is configured to use was `octocat`
 ## Add comments to a ticket via email
 
 The original requester can reply to the initial reply email that they received
-or any other emails from Birch Girder and their reply will be incorporated
+or any other email from Birch Girder and their reply will be incorporated
 into the ticket they're replying to as a comment.
 
 ## Attachments

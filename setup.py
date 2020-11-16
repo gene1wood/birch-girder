@@ -11,7 +11,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='birch_girder',
-    version='0.9.0',
+    version='1.0.0',
     description='An Email Interface for GitHub Issues',
     long_description=long_description,
     url='https://github.com/gene1wood/birch-girder',
@@ -42,7 +42,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "deploy-birch-girder = birch_girder.deploy.main"
+            "deploy-birch-girder = birch_girder.deploy:main"
         ]
     }
 )
