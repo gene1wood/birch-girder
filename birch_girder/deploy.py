@@ -657,7 +657,7 @@ they're complete''')
     zip_file_name = 'artifacts/birch-girder.zip'
     hash_version_map_filename = 'artifacts/.hash_version_map.json'
     layers = get_paginated_results('lambda', 'list_layers', 'Layers')
-    layer_name = '%s-layer' % args.lambda_function_name
+    layer_name = 'birch-girder-layer'
     publish_layer = False
     with open(zip_file_name, mode='rb') as f:
         try:
