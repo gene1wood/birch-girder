@@ -5,7 +5,6 @@ import re
 import cgi
 import logging
 import dateutil.parser
-import uuid
 import boto3
 import requests
 from agithub.GitHub import GitHub
@@ -28,7 +27,7 @@ GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', 'your-github-token-goes-here')
 WORD_LIST = [line.strip() for line in open('/usr/share/dict/words')]
 SUBJECT_PATTERN = re.compile(r'.*\(#([0-9]+)\)$')
 EMAIL_VERIFICATION_PATTERN = re.compile(
-    r'^https://email-verification\.[^.]+.amazonaws.com/.*$')
+    r'^https://email-verification\.[^.]+\.amazonaws\.com/.*$')
 
 """
 Tests to create
