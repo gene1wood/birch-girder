@@ -702,7 +702,7 @@ they're complete''')
                         % layer_version_arn)
             hash_map[digest] = layer_version_arn
             with open(hash_version_map_filename, 'w') as hash_map_file:
-                json.dump(hash_map, hash_map_file)
+                json.dump(hash_map, hash_map_file, indent=4)
             function_needs_update = True
 
 
