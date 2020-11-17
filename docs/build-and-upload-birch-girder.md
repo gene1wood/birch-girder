@@ -1,8 +1,24 @@
-How to build and upload birch-girder to AWS
-===========================================
+# How to build and upload birch-girder to AWS
 
-Build and package virtualenv
-----------------------------
+## Create the Lambda Layer
+
+### Method 1 : Use docker
+
+1. Run this command to fetch a docker image of the lambda environment and build
+   the required packages
+   ```
+   docker run -v "$PWD":/var/task \
+     "lambci/lambda:build-python3.8" \
+     /bin/sh -c "python -m pip install -r requirements.txt -t python/lib/python3.8/site-packages/; exit"
+   ```
+2. Zip up the results
+   ```
+   zip -r ../birch-girder.zip python
+   ```
+
+This process is outlined in [this AWS documentation page](https://aws.amazon.com/premiumsupport/knowledge-center/lambda-layer-simulated-docker/).
+
+### Method 2 : Use Amazon Linux EC2 Instance
 
 To build the zip file containing the virtualenv, spin up an Amazon Linux
 EC2 instance (as this is the environment that AWS Lambda functions run
@@ -17,51 +33,35 @@ in). Create the zip file as follows
     cd birch-girder-project
     zip -r ../birch-girder.zip *
 
-Then fetch the resulting zip from the ec2 instance with scp
+## Use `deploy-birch-girder`
 
-Add the Birch Girder lambda code to the zipped virtualenv
-------------------------------------------
+Use the built in tool `deploy-birch-girder` to deploy Birch Girder
 
-    zip --junk-paths artifacts/birch-girder.zip birch_girder/__init__.py
+```
+usage: deploy-birch-girder [-h] [--config CONFIG] [--lambda-function-name LAMBDA_FUNCTION_NAME] [--lambda-iam-role-name LAMBDA_IAM_ROLE_NAME]
+                           [--ses-rule-set-name SES_RULE_SET_NAME] [--ses-rule-name SES_RULE_NAME] [--github-iam-username GITHUB_IAM_USERNAME]
+                           [--lambda-archive-filename FILENAME.ZIP] [--github-action-filename FILENAME.yml] [--plugins-path PLUGINS_PATH]
 
-Add your config to the zipped virtualenv
-----------------------------------------
+Deploy Birch Girder. This tool will build a config.yaml file, configure GitHub and AWS and deploy Birch Girder into your AWS account.
 
-    zip --junk-paths artifacts/birch-girder.zip birch_girder/config.yaml
+optional arguments:
+  -h, --help            show this help message and exit
+  --config CONFIG       Location of config.yaml (default : birch_girder/config.yaml)
+  --lambda-function-name LAMBDA_FUNCTION_NAME
+                        Name of the AWS Lambda function (default: birch-girder)
+  --lambda-iam-role-name LAMBDA_IAM_ROLE_NAME
+                        Name of the IAM role to be used by Lambda (default: birch-girder)
+  --ses-rule-set-name SES_RULE_SET_NAME
+                        Name of the SES ruleset (default: default-rule-set)
+  --ses-rule-name SES_RULE_NAME
+                        Name of the SES rule to create (default: birch-girder-rule)
+  --github-iam-username GITHUB_IAM_USERNAME
+                        Name of the IAM user to be used by GitHub (default: github-sns-publisher)
+  --lambda-archive-filename FILENAME.ZIP
+                        Path to the newly generated lambda zip file (default: temporary file)
+  --github-action-filename FILENAME.yml
+                        Filename to use for the GitHub Actions workflow (default: emit-comment-to-sns-github-action.yml)
+  --plugins-path PLUGINS_PATH
+                        Path to the plugins directory (default: plugins)
 
-Add any plugins
-----------------------------------------
-
-    zip artifacts/birch-girder.zip plugins/example1.py
-    zip artifacts/birch-girder.zip plugins/example2.py
-
-Publish package to AWS Lambda
------------------------------
-
-    export AWS_DEFAULT_PROFILE="myprofilename"
-    export AWS_DEFAULT_REGION="us-west-2"
-    export AWS_ACCOUNT_ID="0123456789012"
-    aws lambda create-function --function-name birch-girder --runtime python2.7 --timeout 30 --role arn:aws:iam::$AWS_ACCOUNT_ID:role/birch-girder --handler __init__.lambda_handler --zip-file fileb://artifacts/birch-girder.zip
-
-There are lambda add-permissions steps needed here which are done by
-manage.py to grant SES rights to invoke this function.
-
-Iterate on code by updating and uploading
------------------------------------------
-
-If you want to extend or modify the monitor you can update the running
-code like this
-
-    # Update the file in the zip archive 
-    zip --junk-paths artifacts/birch-girder.zip birch_girder/__init__.py
-
-    # Upload the new zip file
-    aws lambda update-function-code --function-name birch-girder --zip-file fileb://artifacts/birch-girder.zip
-
-If you want to change your configuration
-
-    # Update the file in the zip archive 
-    zip --junk-paths artifacts/birch-girder.zip birch_girder/config.yaml
-
-    # Upload the new zip file
-    aws lambda update-function-code --function-name birch-girder --zip-file fileb://artifacts/birch-girder.zip
+```
