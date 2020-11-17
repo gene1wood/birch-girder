@@ -4,7 +4,7 @@
 import os.path
 import time
 import json
-import collections
+import collections.abc
 from getpass import getpass
 import argparse
 import zipfile
@@ -24,7 +24,7 @@ GREEN_COLOR = '\033[92m'
 BLUE_COLOR = '\033[94m'
 
 
-class Config(collections.MutableMapping):
+class Config(collections.abc.MutableMapping):
     def __init__(self, filename, *args, **kwargs):
         self.filename = filename
         self.store = dict()
