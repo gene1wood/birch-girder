@@ -900,6 +900,15 @@ class EventHandler:
                 else '''Thanks for contacting us. We will get back to you as soon
 as possible. You can reply to this email if you have additional information
 to add to your request.''')
+            status, html_body = self.gh.markdown.post(
+                body={
+                    'text': body,
+                    'mode': 'gfm',
+                    'context': '%s/%s' % (
+                        parsed_email.github_owner,
+                        parsed_email.github_repo)
+                }
+            )
             text_url = 'https://github.com/%s/%s/issues/%s' % (
                 parsed_email.github_owner,
                 parsed_email.github_repo,
@@ -936,7 +945,7 @@ to add to your request.''')
                     in_reply_to=parsed_email.message_id,
                     references=parsed_email.message_id,
                     html=EMAIL_HTML_TEMPLATE.substitute(
-                        html_body=body.format(html_url),
+                        html_body=html_body.decode('utf-8').format(html_url),
                         **template_args),
                     text=EMAIL_TEXT_TEMPLATE.substitute(
                         text_body=body.format(text_url),
