@@ -953,13 +953,23 @@ to add to your request.''')
 
                 # Add a reaction to the issue indicating the sender has been
                 # replied to
+                repo = (
+                    self.gh.repos[parsed_email.github_owner][parsed_email.github_repo])
                 issue = repo.issues[issue_data['number']]
                 status, reaction_data = issue.reactions.post(
                     body={'content': 'rocket'},
                     headers={
                         'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
-                logger.info('Just added a reaction to issue #%s after sending an email' %
-                            issue_data['number'])
+                if int(status / 100) == 2:
+                    logger.info(
+                        'Just added a reaction to issue #%s after sending '
+                        'an email' % issue_data['number'])
+                else:
+                    logger.error(
+                        'Unable to add reaction to issue #%s after %s : %s' % (
+                            issue_data['number'],
+                            status,
+                            reaction_data))
             else:
                 message_id = '1'
             logger.debug(
