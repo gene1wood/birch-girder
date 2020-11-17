@@ -955,7 +955,7 @@ to add to your request.''')
                 # replied to
                 issue = repo.issues[issue_data['number']]
                 status, reaction_data = issue.reactions.post(
-                    body={'content':'heart'},
+                    body={'content': 'rocket'},
                     headers={
                         'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
                 logger.info('Just added a reaction to issue #%s after sending an email' %
@@ -1111,7 +1111,7 @@ to add to your request.''')
             comment = (self.gh.repos[message['repository']['full_name']].
                 issues.comments[message['comment']['id']])
             status, reaction_data = comment.reactions.post(
-                body={'content':'heart'},
+                body={'content': 'rocket'},
                 headers={
                     'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
             logger.info('Just added a reaction to a comment in issue #%s after '
