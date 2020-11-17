@@ -11,7 +11,7 @@ import boto3
 from agithub.GitHub import GitHub  # pypi install agithub
 import yaml  # pip install PyYAML
 from dateutil import tz  # sudo pip install python-dateutil
-import email
+import email.utils
 from email_reply_parser import \
     EmailReplyParser  # pip install email_reply_parser
 from email.mime.multipart import MIMEMultipart
@@ -29,9 +29,9 @@ TIME_ZONE = tz.gettz('America/Los_Angeles')
 # Example "Re: [examplecorp/support] Add myself to user list. (#2)"
 # https://stackoverflow.com/questions/9153629/regex-code-for-removing-fwd-re-etc-from-email-subject/11640925#comment81160171_11640925
 EMAIL_SUBJECT_PREFIX = re.compile(
-    '^([[(] *)?(RE?S?|FYI|RIF|I|FS|VB|RV|ENC|ODP|PD|YNT'
-    '|ILT|SV|VS|VL|AW|WG|ΑΠ|ΣΧΕΤ|ΠΡΘ|תגובה|הועבר|主题|转发|FWD?)'
-    ' *([-:;)\]][ :;\])-]*|$)|\]+ *$',
+    r'^([\[(] *)?(RE?S?|FYI|RIF|I|FS|VB|RV|ENC|ODP|PD|YNT'
+    r'|ILT|SV|VS|VL|AW|WG|ΑΠ|ΣΧΕΤ|ΠΡΘ|תגובה|הועבר|主题|转发|FWD?)'
+    r' *([-:;)\]][ :;\])-]*|$)|]+ *$',
     re.IGNORECASE)
 
 # "[examplecorp/support] Add myself to user list. (#2)"
@@ -1121,7 +1121,7 @@ def lambda_handler(event, context):
     """
     # logger.debug('got event {}'.format(event))
     with open('config.yaml') as f:
-        config = yaml.load(f.read())
+        config = yaml.load(f.read(), Loader=yaml.SafeLoader)
     handler = EventHandler(config, event, context)
     handler.process_event()
 

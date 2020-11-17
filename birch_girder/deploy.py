@@ -15,7 +15,6 @@ import hashlib
 import yaml  # pip install PyYAML
 import boto3
 from agithub.GitHub import GitHub  # pip install agithub
-import agithub.base
 from base64 import b64encode
 from nacl import encoding, public
 
@@ -81,7 +80,7 @@ def get_two_factor_code():
 
 
 def green_print(data):
-    print(GREEN_COLOR + data + END_COLOR)
+    print('%s%s%s' % (GREEN_COLOR, data, END_COLOR))
 
 
 def color_getpass(prompt):
@@ -339,7 +338,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
             'Version': '2008-10-17',
             'Statement': []
         }
-    if (statement_id not in [x['Sid'] for x in policy['Statement']]):
+    if statement_id not in [x['Sid'] for x in policy['Statement']]:
         policy['Statement'].append(
             {
                 'Sid': statement_id,
@@ -662,7 +661,7 @@ they're complete''')
     layers = get_paginated_results('lambda', 'list_layers', 'Layers')
     layer_name = '%s-layer' % args.lambda_function_name
     publish_layer = False
-    with open(zip_file_name) as f:
+    with open(zip_file_name, mode='rb') as f:
         try:
             hash_map_file = open(hash_version_map_filename)
             hash_map = json.load(hash_map_file)
