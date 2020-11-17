@@ -22,7 +22,7 @@ import importlib
 import pyzmail
 import bs4
 import base64
-import urllib
+import urllib.parse
 
 TIME_ZONE = tz.gettz('America/Los_Angeles')
 
@@ -401,11 +401,12 @@ class Email:
             if len(self.record['ses']['mail']['commonHeaders']['from']) == 1
             else ', '.join(
                 self.record['ses']['mail']['commonHeaders']['from']))
+        possible_recipients = list(self.config['recipient_list'].keys())
 
         logger.debug(
             'Multiple email destinations found. Looking for an applicable one '
             ': %s' % self.record['ses']['mail']['destination'])
-        for possible_recipient in self.config['recipient_list'].keys():
+        for possible_recipient in possible_recipients:
             # Assign the first matching address in recipient_list to
             # to_address
             # Note : It's possible we could determine the actual correct
@@ -421,7 +422,7 @@ class Email:
                 break
 
         if not self.to_address:
-            self.to_address = self.config['recipient_list'].keys()[0].lower()
+            self.to_address = possible_recipients[0].lower()
             logger.debug(
                 'No applicable email was found in destination list so we will '
                 'use %s : %s' % (self.to_address,
@@ -435,7 +436,7 @@ class Email:
                 "the reply email back to the submitter may come from a "
                 "different email address than they sent the request to." % (
                     self.record['ses']['mail']['destination'],
-                    self.config['recipient_list'].keys(),
+                    possible_recipients,
                     self.to_address
                 ))
 
@@ -577,7 +578,7 @@ class Email:
             soup = bs4.BeautifulSoup(
                 msg.html_part.get_payload(), 'html.parser')
             self.email_body = ''.join(
-                unicode(x) for x in (
+                str(x) for x in (
                     soup.body.contents
                     if soup.body is not None else soup.contents)
                 if not isinstance(x, bs4.Comment))
@@ -596,7 +597,7 @@ class Email:
                 storage_filename = "%s-%s" % (self.timestamp, filename)
                 logger.info('Adding attachment %s to repo' % filename)
                 if not self.dryrun:
-                    path = 'attachments/%s' % urllib.quote(storage_filename)
+                    path = 'attachments/%s' % urllib.parse.quote(storage_filename)
                     status, data = (
                         self.gh.repos[self.github_owner]
                         [self.github_repo].contents[path].put(
@@ -656,8 +657,8 @@ class EventHandler:
                 "couldn't add these new attachment links to the table. "
                 "Though this attachment has been saved to the repo at %s the "
                 "issue has not been updated to reflect this" % (
-                    new_attachment_urls.keys(),
-                    new_attachment_urls.values()
+                    list(new_attachment_urls.keys()),
+                    list(new_attachment_urls.values())
                 )
             )
             return body
@@ -1083,7 +1084,7 @@ to add to your request.''')
         html_email_body = (
             '<a href="https://github.com/{username}">@{username}</a> writes :'
             '<br>\n{html_comment}'.format(username=author,
-                                          html_comment=html_comment))
+                                          html_comment=html_comment.decode('utf-8')))
 
         issue_reference = '%s/%s#%s' % (
             message['repository']['owner']['login'],

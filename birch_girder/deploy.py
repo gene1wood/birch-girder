@@ -23,12 +23,6 @@ END_COLOR = '\033[0m'
 GREEN_COLOR = '\033[92m'
 BLUE_COLOR = '\033[94m'
 
-try:
-    # Python 2
-    prompt = lambda x: raw_input('%s%s%s : ' % (BLUE_COLOR, x, END_COLOR))
-except NameError:
-    # Python 3
-    prompt = lambda x: input('%s%s%s : ' % (BLUE_COLOR, x, END_COLOR))
 
 class Config(collections.MutableMapping):
     def __init__(self, filename, *args, **kwargs):
@@ -64,6 +58,10 @@ class Config(collections.MutableMapping):
                 self.update(**yaml.load(f.read(), Loader=yaml.SafeLoader))
         except:
             pass
+
+
+def prompt(message):
+    return input('%s%s%s : ' % (BLUE_COLOR, message, END_COLOR))
 
 
 def plugin_path_type(path):
@@ -411,7 +409,7 @@ an SNS topic created that internal Birch Girder errors will be sent to.''')
     identities = get_paginated_results('ses', 'list_identities', 'Identities')
     verifications_initiated = False
     identities_that_matter = []
-    for recipient in [x.lower() for x in config['recipient_list'].keys()]:
+    for recipient in [x.lower() for x in list(config['recipient_list'].keys())]:
         domain = recipient.split('@')[1]
         if recipient not in identities and domain not in identities:
             print(
@@ -698,7 +696,7 @@ they're complete''')
                 LayerName=layer_name,
                 Description='Birch Girder supporting python packages',
                 Content={'ZipFile': f.read()},
-                CompatibleRuntimes=['python2.7'])
+                CompatibleRuntimes=['python3.8'])
             layer_version_arn = response['LayerVersionArn']
             green_print('AWS Lambda layer published : %s'
                         % layer_version_arn)
@@ -723,7 +721,7 @@ they're complete''')
             try:
                 response = client.create_function(
                     FunctionName=args.lambda_function_name,
-                    Runtime='python2.7',
+                    Runtime='python3.8',
                     Role=lambda_iam_role_arn,
                     Handler='__init__.lambda_handler',
                     Code={'ZipFile': in_memory_data.getvalue()},
@@ -770,7 +768,7 @@ they're complete''')
     with zipfile.ZipFile(in_memory_data, 'w') as zip_file:
         config_file = zipfile.ZipInfo('config.yaml', time.localtime()[:6])
         config_file.compress_type = zipfile.ZIP_DEFLATED
-        config_file.external_attr = 0644 << 16L
+        config_file.external_attr = 0o644 << 16
         zip_file.writestr(config_file, open(args.config).read())
 
         zip_file.write(
@@ -855,7 +853,7 @@ they're complete''')
             Rule={
                 'Name': args.ses_rule_name,
                 'Enabled': True,
-                'Recipients': config['recipient_list'].keys(),
+                'Recipients': list(config['recipient_list'].keys()),
                 'Actions': [
                     {
                         'S3Action': {
@@ -1014,17 +1012,17 @@ organization so we can't create the repo. Skipping'''.format(
                 status, _ = gh.repos[owner][repo].contents['.github']['workflows'][args.github_action_filename].put(
                     body={
                         'message': 'Adding Birch Girder GitHub Actions workflow\n\nhttps://github.com/gene1wood/birch-girder',
-                        'content': base64.b64encode(content)})
+                        'content': base64.b64encode(content.encode('ascii'))})
                 if 200 <= status < 300:
                     green_print('  New GitHub Actions workflow %s deployed'
                                 % (args.github_action_filename))
                 else:
                     print("result from add %s and %s" % (status, _))
-            elif base64.b64decode(workflow_data['content']) != content:
+            elif base64.b64decode(workflow_data['content']).decode('ascii') != content:
                 status, _ = gh.repos[owner][repo].contents['.github']['workflows'][args.github_action_filename].put(
                     body={
                         'message': 'Updating Birch Girder GitHub Actions workflow\n\nhttps://github.com/gene1wood/birch-girder',
-                        'content': base64.b64encode(content),
+                        'content': base64.b64encode(content.encode('ascii')),
                         'sha': workflow_data['sha']})
                 if 200 <= status < 300:
                     green_print('  GitHub Actions workflow %s updated'
