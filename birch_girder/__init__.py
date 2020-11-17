@@ -11,7 +11,7 @@ import boto3
 from agithub.GitHub import GitHub  # pypi install agithub
 import yaml  # pip install PyYAML
 from dateutil import tz  # sudo pip install python-dateutil
-import email
+import email.utils
 from email_reply_parser import \
     EmailReplyParser  # pip install email_reply_parser
 from email.mime.multipart import MIMEMultipart
@@ -22,16 +22,16 @@ import importlib
 import pyzmail
 import bs4
 import base64
-import urllib
+import urllib.parse
 
 TIME_ZONE = tz.gettz('America/Los_Angeles')
 
 # Example "Re: [examplecorp/support] Add myself to user list. (#2)"
 # https://stackoverflow.com/questions/9153629/regex-code-for-removing-fwd-re-etc-from-email-subject/11640925#comment81160171_11640925
 EMAIL_SUBJECT_PREFIX = re.compile(
-    '^([[(] *)?(RE?S?|FYI|RIF|I|FS|VB|RV|ENC|ODP|PD|YNT'
-    '|ILT|SV|VS|VL|AW|WG|ΑΠ|ΣΧΕΤ|ΠΡΘ|תגובה|הועבר|主题|转发|FWD?)'
-    ' *([-:;)\]][ :;\])-]*|$)|\]+ *$',
+    r'^([\[(] *)?(RE?S?|FYI|RIF|I|FS|VB|RV|ENC|ODP|PD|YNT'
+    r'|ILT|SV|VS|VL|AW|WG|ΑΠ|ΣΧΕΤ|ΠΡΘ|תגובה|הועבר|主题|转发|FWD?)'
+    r' *([-:;)\]][ :;\])-]*|$)|]+ *$',
     re.IGNORECASE)
 
 # "[examplecorp/support] Add myself to user list. (#2)"
@@ -401,11 +401,12 @@ class Email:
             if len(self.record['ses']['mail']['commonHeaders']['from']) == 1
             else ', '.join(
                 self.record['ses']['mail']['commonHeaders']['from']))
+        possible_recipients = list(self.config['recipient_list'].keys())
 
         logger.debug(
             'Multiple email destinations found. Looking for an applicable one '
             ': %s' % self.record['ses']['mail']['destination'])
-        for possible_recipient in self.config['recipient_list'].keys():
+        for possible_recipient in possible_recipients:
             # Assign the first matching address in recipient_list to
             # to_address
             # Note : It's possible we could determine the actual correct
@@ -421,7 +422,7 @@ class Email:
                 break
 
         if not self.to_address:
-            self.to_address = self.config['recipient_list'].keys()[0].lower()
+            self.to_address = possible_recipients[0].lower()
             logger.debug(
                 'No applicable email was found in destination list so we will '
                 'use %s : %s' % (self.to_address,
@@ -435,7 +436,7 @@ class Email:
                 "the reply email back to the submitter may come from a "
                 "different email address than they sent the request to." % (
                     self.record['ses']['mail']['destination'],
-                    self.config['recipient_list'].keys(),
+                    possible_recipients,
                     self.to_address
                 ))
 
@@ -577,7 +578,7 @@ class Email:
             soup = bs4.BeautifulSoup(
                 msg.html_part.get_payload(), 'html.parser')
             self.email_body = ''.join(
-                unicode(x) for x in (
+                str(x) for x in (
                     soup.body.contents
                     if soup.body is not None else soup.contents)
                 if not isinstance(x, bs4.Comment))
@@ -596,7 +597,7 @@ class Email:
                 storage_filename = "%s-%s" % (self.timestamp, filename)
                 logger.info('Adding attachment %s to repo' % filename)
                 if not self.dryrun:
-                    path = 'attachments/%s' % urllib.quote(storage_filename)
+                    path = 'attachments/%s' % urllib.parse.quote(storage_filename)
                     status, data = (
                         self.gh.repos[self.github_owner]
                         [self.github_repo].contents[path].put(
@@ -656,8 +657,8 @@ class EventHandler:
                 "couldn't add these new attachment links to the table. "
                 "Though this attachment has been saved to the repo at %s the "
                 "issue has not been updated to reflect this" % (
-                    new_attachment_urls.keys(),
-                    new_attachment_urls.values()
+                    list(new_attachment_urls.keys()),
+                    list(new_attachment_urls.values())
                 )
             )
             return body
@@ -900,6 +901,15 @@ class EventHandler:
                 else '''Thanks for contacting us. We will get back to you as soon
 as possible. You can reply to this email if you have additional information
 to add to your request.''')
+            status, html_body = self.gh.markdown.post(
+                body={
+                    'text': body,
+                    'mode': 'gfm',
+                    'context': '%s/%s' % (
+                        parsed_email.github_owner,
+                        parsed_email.github_repo)
+                }
+            )
             text_url = 'https://github.com/%s/%s/issues/%s' % (
                 parsed_email.github_owner,
                 parsed_email.github_repo,
@@ -936,7 +946,7 @@ to add to your request.''')
                     in_reply_to=parsed_email.message_id,
                     references=parsed_email.message_id,
                     html=EMAIL_HTML_TEMPLATE.substitute(
-                        html_body=body.format(html_url),
+                        html_body=html_body.decode('utf-8').format(html_url),
                         **template_args),
                     text=EMAIL_TEXT_TEMPLATE.substitute(
                         text_body=body.format(text_url),
@@ -944,13 +954,23 @@ to add to your request.''')
 
                 # Add a reaction to the issue indicating the sender has been
                 # replied to
+                repo = (
+                    self.gh.repos[parsed_email.github_owner][parsed_email.github_repo])
                 issue = repo.issues[issue_data['number']]
                 status, reaction_data = issue.reactions.post(
-                    body={'content':'heart'},
+                    body={'content': 'rocket'},
                     headers={
                         'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
-                logger.info('Just added a reaction to issue #%s after sending an email' %
-                            issue_data['number'])
+                if int(status / 100) == 2:
+                    logger.info(
+                        'Just added a reaction to issue #%s after sending '
+                        'an email' % issue_data['number'])
+                else:
+                    logger.error(
+                        'Unable to add reaction to issue #%s after %s : %s' % (
+                            issue_data['number'],
+                            status,
+                            reaction_data))
             else:
                 message_id = '1'
             logger.debug(
@@ -1064,7 +1084,7 @@ to add to your request.''')
         html_email_body = (
             '<a href="https://github.com/{username}">@{username}</a> writes :'
             '<br>\n{html_comment}'.format(username=author,
-                                          html_comment=html_comment))
+                                          html_comment=html_comment.decode('utf-8')))
 
         issue_reference = '%s/%s#%s' % (
             message['repository']['owner']['login'],
@@ -1102,7 +1122,7 @@ to add to your request.''')
             comment = (self.gh.repos[message['repository']['full_name']].
                 issues.comments[message['comment']['id']])
             status, reaction_data = comment.reactions.post(
-                body={'content':'heart'},
+                body={'content': 'rocket'},
                 headers={
                     'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
             logger.info('Just added a reaction to a comment in issue #%s after '
@@ -1121,7 +1141,7 @@ def lambda_handler(event, context):
     """
     # logger.debug('got event {}'.format(event))
     with open('config.yaml') as f:
-        config = yaml.load(f.read())
+        config = yaml.load(f.read(), Loader=yaml.SafeLoader)
     handler = EventHandler(config, event, context)
     handler.process_event()
 

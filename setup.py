@@ -11,7 +11,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='birch_girder',
-    version='1.0.0',
+    version='1.1.0',
     description='An Email Interface for GitHub Issues',
     long_description=long_description,
     url='https://github.com/gene1wood/birch-girder',
@@ -23,8 +23,8 @@ setup(
         'Intended Audience :: System Administrators',
         'Topic :: Software Development :: Bug Tracking',
         'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.8',
     ],
     keywords='aws lambda github issue ses',
     packages=find_packages(exclude=['contrib', 'docs', 'tests']),
@@ -35,7 +35,7 @@ setup(
         'PyYAML',
         'python-dateutil',
         'email_reply_parser',
-        'pyzmail',
+        'pyzmail36',
         'beautifulsoup4'],
     extras_require={
         "deploy":  ["pynacl", "boto3", "PyYAML", "agithub"]
