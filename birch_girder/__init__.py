@@ -23,7 +23,8 @@ import pyzmail  # pip install pyzmail36
 import yaml  # pip install PyYAML
 from agithub.GitHub import GitHub  # pypi install agithub
 from dateutil import tz  # sudo pip install python-dateutil
-from email_reply_parser import EmailReplyParser  # pip install email_reply_parser
+from email_reply_parser \
+    import EmailReplyParser  # pip install email_reply_parser
 
 TIME_ZONE = tz.gettz('America/Los_Angeles')
 
@@ -136,6 +137,7 @@ def logging_local_time_converter(secs):
     pst = utc.astimezone(to_zone)
     return pst.timetuple()
 
+
 log_level = os.getenv('LOG_LEVEL', 'INFO')
 
 logger = logging.getLogger(__name__)
@@ -157,6 +159,7 @@ logging.getLogger('botocore').setLevel(logging.CRITICAL)
 logging.getLogger('requests').setLevel(logging.CRITICAL)
 logging.getLogger('urllib3').setLevel(logging.CRITICAL)
 logging.getLogger('email_reply_parser').setLevel(logging.CRITICAL)
+
 
 def get_event_type(event):
     """Determine where an event originated from based on it's contents
@@ -201,12 +204,11 @@ def parse_hidden_content(body):
     if result is None:
         # hidden content is missing
         return {}
-    else:
-        try:
-            return yaml.safe_load(result.group(1))
-        except yaml.YAMLError:
-            # Can't parse the hidden data
-            return {}
+    try:
+        return yaml.safe_load(result.group(1))
+    except yaml.YAMLError:
+        # Can't parse the hidden data
+        return {}
 
 
 def get_content_block(name, data):
@@ -298,31 +300,30 @@ def clean_sender_address(sender):
     """
 
     local_part, domain = sender.lower().split('@')
-    if sender.startswith('prvs='):
-        # prvs=4480132787=billing@example.com
-        elements = local_part.split('=')
-        if len(elements) == 3:
-            try:
-                int(elements[1], 16)
-                tag_val = elements[1]
-                loc_core = elements[2]
-            except ValueError:
-                try:
-                    int(elements[2], 16)
-                    tag_val = elements[2]
-                    loc_core = elements[1]
-                except ValueError:
-                    raise Exception(
-                        'Neither the second nor third elements in the '
-                        'local-part of the address are valid prvs tag-val '
-                        'syntax')
-        else:
-            raise Exception(
-                'local-part of address appears to be prvs but there are not '
-                'three "=" delimited values')
-        return f'{loc_core}@{domain}'
-    else:
+    # prvs=4480132787=billing@example.com
+    if not sender.startswith('prvs='):
         return sender
+    elements = local_part.split('=')
+    if len(elements) == 3:
+        try:
+            int(elements[1], 16)
+            tag_val = elements[1]
+            loc_core = elements[2]
+        except ValueError:
+            try:
+                int(elements[2], 16)
+                tag_val = elements[2]
+                loc_core = elements[1]
+            except ValueError:
+                raise Exception(
+                    'Neither the second nor third elements in the '
+                    'local-part of the address are valid prvs tag-val '
+                    'syntax')
+    else:
+        raise Exception(
+            'local-part of address appears to be prvs but there are not '
+            'three "=" delimited values')
+    return f'{loc_core}@{domain}'
 
 
 class Alerter:
@@ -454,7 +455,10 @@ class Email:
         if not self.raw_body:
             self.get_email_payload()
             self.parse_email_payload()
-        self.stripped_reply = EmailReplyParser.parse_reply(self.email_body_text if self.email_body_text != '' else self.email_body)
+        self.stripped_reply = EmailReplyParser.parse_reply(
+            self.email_body_text
+            if self.email_body_text != ''
+            else self.email_body)
 
     def parse_subject(self):
         """Parse the raw email subject, stripping off the leading Re: and
@@ -477,57 +481,59 @@ class Email:
                 f'Inbound email with subject "{stripped_subject}" contains '
                 f'existing issue number {self.issue_number} and results in '
                 f'subject "{self.subject}"')
-        elif self.config.get('allow_issue_merging_by_subject', True):
-            # The inbound email has no issue number in the subject
-            # Search for an existing issue with a matching subject
-            self.subject = stripped_subject
-
-            gh_query = ""
-            gh_query += f"author:{self.config['github_username']} "
-            gh_query += "type:issue "
-            gh_query += f"repo:{self.github_owner}/{self.github_repo} "
-            if 'label' in self.config['recipient_list'][self.to_address]:
-                gh_query += (
-                    f"label:{self.config['recipient_list'][self.to_address]['label']} ")
-            status, data = self.gh.search.issues.get(q=gh_query)
-            results_list = []
-            for issue_search_result in data['items']:
-                if self.subject in issue_search_result['title']:
-                    issue_data = parse_hidden_content(issue_search_result['body'])
-                    # This doesn't account for cases where there are multiple
-                    # source addresses
-                    issue_source = issue_data['source'] if 'source' in issue_data else issue_data.get('from')
-                    if self.source in issue_source:
-                        results_list.append(issue_search_result['number'])
-                    else:
-                        logger.debug(
-                            "Encountered an inbound email that has a subject "
-                            "which matches issue #%s in %s/%s but which was "
-                            "sent by %s not by %s who created the existing "
-                            "issue. Creating a new issue." % (
-                                issue_search_result['number'],
-                                self.github_owner,
-                                self.github_repo,
-                                self.source,
-                                issue_source))
-
-            logger.debug(
-                f'Search "{gh_query}" triggered by inbound "{self.subject}" '
-                f'email matched issue(s) {results_list}')
-
-            if len(results_list) == 0 or len(results_list) > 1:
-                # No matching issue found or multiple matching issues found
-                # Create a new issue
-                self.issue_number = False
-            else:
-                # One matching issue found but the subject didn't have an
-                # issue number
-                # Add a comment to the issue
-                self.issue_number = results_list[0]
-        else:
+            return
+        if not self.config.get('allow_issue_merging_by_subject', True):
             # Issue merging by matching subject is disabled, create a new issue
             self.subject = stripped_subject
             self.issue_number = False
+            return
+        # The inbound email has no issue number in the subject
+        # Search for an existing issue with a matching subject
+        self.subject = stripped_subject
+
+        gh_query = ""
+        gh_query += f"author:{self.config['github_username']} "
+        gh_query += "type:issue "
+        gh_query += f"repo:{self.github_owner}/{self.github_repo} "
+        if 'label' in self.config['recipient_list'][self.to_address]:
+            gh_query += (
+                f"label:{self.config['recipient_list'][self.to_address]['label']} ")
+        status, data = self.gh.search.issues.get(q=gh_query)
+        results_list = []
+        for issue_search_result in data['items']:
+            if self.subject not in issue_search_result['title']:
+                continue
+            issue_data = parse_hidden_content(issue_search_result['body'])
+            # This doesn't account for cases where there are multiple
+            # source addresses
+            issue_source = issue_data['source'] if 'source' in issue_data else issue_data.get('from')
+            if self.source in issue_source:
+                results_list.append(issue_search_result['number'])
+            else:
+                logger.debug(
+                    "Encountered an inbound email that has a subject "
+                    "which matches issue #%s in %s/%s but which was sent "
+                    "by %s not by %s who created the existing issue. "
+                    "Creating a new issue." % (
+                        issue_search_result['number'],
+                        self.github_owner,
+                        self.github_repo,
+                        self.source,
+                        issue_source))
+
+        logger.debug(
+            f'Search "{gh_query}" triggered by inbound "{self.subject}" '
+            f'email matched issue(s) {results_list}')
+
+        if len(results_list) == 0 or len(results_list) > 1:
+            # No matching issue found or multiple matching issues found
+            # Create a new issue
+            self.issue_number = False
+        else:
+            # One matching issue found but the subject didn't have an
+            # issue number
+            # Add a comment to the issue
+            self.issue_number = results_list[0]
 
 
     def get_email_payload(self):
@@ -588,29 +594,30 @@ class Email:
             self.email_body = "Unable to parse body from email"
 
         for mailpart in msg.mailparts:
-            if not mailpart.is_body in ['text/plain', 'text/html']:
-                # This mailpart is an attachment
-                # Note: We have to check for specific values of is_body because
-                # pyzmail doesn't set is_body to None as the docs indicate
-                filename = mailpart.sanitized_filename
-                storage_filename = f"{self.timestamp}-{filename}"
-                logger.info(f'Adding attachment {filename} to repo')
-                if not self.dryrun:
-                    path = f'attachments/{urllib.parse.quote(storage_filename)}'
-                    status, data = (
-                        self.gh.repos[self.github_owner]
-                        [self.github_repo].contents[path].put(
-                            body={
-                                'message': f'Add attachment {filename}',
-                                'content': base64.b64encode(
-                                    mailpart.get_payload()).decode('utf-8')
-                            }
-                        )
-                    )
-                    html_url = data['content']['html_url']
-                    self.new_attachment_urls[filename] = html_url
-                else:
-                    self.new_attachment_urls[filename] = 'https://example.com'
+            if mailpart.is_body in ['text/plain', 'text/html']:
+                continue
+            # This mailpart is an attachment
+            # Note: We have to check for specific values of is_body because
+            # pyzmail doesn't set is_body to None as the docs indicate
+            filename = mailpart.sanitized_filename
+            storage_filename = f"{self.timestamp}-{filename}"
+            logger.info(f'Adding attachment {filename} to repo')
+            if self.dryrun:
+                self.new_attachment_urls[filename] = 'https://example.com'
+                continue
+            path = f'attachments/{urllib.parse.quote(storage_filename)}'
+            status, data = (
+                self.gh.repos[self.github_owner]
+                [self.github_repo].contents[path].put(
+                    body={
+                        'message': f'Add attachment {filename}',
+                        'content': base64.b64encode(
+                            mailpart.get_payload()).decode('utf-8')
+                    }
+                )
+            )
+            html_url = data['content']['html_url']
+            self.new_attachment_urls[filename] = html_url
 
 
 class EventHandler:
@@ -725,6 +732,190 @@ class EventHandler:
                 f"{traceback.format_exc()}")
             raise
 
+    def add_comment_to_issue(self, issue, parsed_email):
+        """Add a comment to the existing issue
+
+        :param issue: agithub prepared query for the GitHub issue
+        :param parsed_email: Email object of the parsed email
+        :return: None
+        """
+
+        status, issue_data = issue.get()
+        if issue_data['state'] == 'closed' and not self.dryrun:
+            status, issue_data = issue.patch(body={'state': 'open'})
+
+        if len(parsed_email.new_attachment_urls) > 0:
+            comment_attachments = '''| Attachments |\n| --- |\n'''
+            comment_attachments += '\n'.join(
+                [f'| [{x}]({parsed_email.new_attachment_urls[x]}) |'
+                 for x in parsed_email.new_attachment_urls])
+        else:
+            comment_attachments = ''
+        # TODO : I'll ignore the "References" header for now because I
+        # don't know what AWS SES does with it
+        if not self.dryrun:
+            new_body = self.update_issue(
+                issue_data['body'], parsed_email.message_id,
+                parsed_email.new_attachment_urls)
+            status, issue_data = issue.patch(body={'body': new_body})
+
+        comment_message = COMMENT_TEMPLATE.substitute(
+            from_address=parsed_email.from_address,
+            to_address=parsed_email.to_address,
+            date=parsed_email.date,
+            headers=json.dumps(
+                parsed_email.record['ses']['mail']['headers']),
+            body=parsed_email.stripped_reply,
+            comment_attachments=comment_attachments)
+        logger.info(
+            f"Adding a comment to the existing issue "
+            f"{parsed_email.issue_number}.")
+        if not self.dryrun:
+            status, comment_data = issue.comments.post(
+                body={'body': comment_message})
+
+    def send_email_to_reporter(self, parsed_email, issue_data):
+        """Send an email to the issue reporter
+
+        :param parsed_email: Email object of the parsed email
+        :param issue_data: Dictionary of attributes of the GitHub issue
+        :return: The message ID of the email sent
+        """
+        if ('known_machine_senders' in self.config
+                and parsed_email.source in self.config['known_machine_senders']):
+            logger.info(
+                f"Not sending an email to {parsed_email.source} because "
+                f"they are a known machine sender.")
+            return True
+        body = (
+            self.config['initial_email_reply']
+            if 'initial_email_reply' in self.config
+            else '''Thanks for contacting us. We will get back to you as soon
+as possible. You can reply to this email if you have additional information
+to add to your request.''')
+        status, html_body = self.gh.markdown.post(
+            body={
+                'text': body,
+                'mode': 'gfm',
+                'context': '/'.join([
+                    parsed_email.github_owner, parsed_email.github_repo])
+            }
+        )
+        text_url = "https://github.com/%s/%s/issues/%s" % (
+            parsed_email.github_owner,
+            parsed_email.github_repo,
+            issue_data['number']
+        )
+        issue_reference = '%s/%s#%s' % (
+            parsed_email.github_owner,
+            parsed_email.github_repo,
+            issue_data['number']
+        )
+        html_url = f'<a href="{text_url}">{issue_reference}</a>'
+        email_subject = SUBJECT_TEMPLATE.substitute(
+            subject=parsed_email.subject,
+            issue_number=issue_data['number'])
+
+        # TODO : what do we do if the inbound email had CCs?
+
+        logger.info(
+            f"Sending an email to {parsed_email.from_address} confirming "
+            f"that a new issue has been created.")
+        if self.dryrun:
+            return '1'
+        template_args = {
+            'issue_reference': issue_reference,
+            'provider': self.config['provider_name']}
+        message_id = send_email(
+            email_subject=email_subject,
+            from_name=(self.config['recipient_list']
+                       [parsed_email.to_address].get('name')),
+            from_address=parsed_email.to_address,
+            to_address=parsed_email.from_address,
+            in_reply_to=parsed_email.message_id,
+            references=parsed_email.message_id,
+            html=EMAIL_HTML_TEMPLATE.substitute(
+                html_body=html_body.decode('utf-8').format(html_url),
+                **template_args),
+            text=EMAIL_TEXT_TEMPLATE.substitute(
+                text_body=body.format(text_url),
+                **template_args))
+
+        # Add a reaction to the issue indicating the sender has been
+        # replied to
+        repo = (
+            self.gh.repos[parsed_email.github_owner][parsed_email.github_repo])
+        issue = repo.issues[issue_data['number']]
+        status, reaction_data = issue.reactions.post(
+            body={'content': 'rocket'},
+            headers={
+                'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
+        if int(status / 100) == 2:
+            logger.info(
+                f"Just added a reaction to issue "
+                f"#{issue_data['number']} after sending an email")
+        else:
+            logger.error(
+                f"Unable to add reaction to issue "
+                f"#{issue_data['number']} after {status} : "
+                f"{reaction_data}")
+        return message_id
+
+    def create_issue(self, repo, parsed_email):
+        """Create a new GitHub issue
+        Also label th issue with the label from the recipient_list or just
+        use the username of the email to_address
+
+        :param repo: agithub prepared query for the GitHub repo
+        :param parsed_email: Email object of the parsed email
+        :return: A dictionary of attributes of the created GitHub issue
+        """
+
+        labels = [
+            self.config['recipient_list'][parsed_email.to_address].get(
+                'label', parsed_email.to_address.split('@')[0])]
+
+        email_metadata = {
+            'from': parsed_email.from_address,
+            'source': parsed_email.source,
+            'to': parsed_email.to_address,
+            'date': parsed_email.date,
+            'message_id': parsed_email.message_id
+        }
+
+        if len(parsed_email.new_attachment_urls) > 0:
+            email_metadata['attachments'] = parsed_email.new_attachment_urls
+
+        issue_message = ISSUE_TEMPLATE.substitute(
+            hidden_content_block=get_content_block(
+                'hidden_content',
+                yaml.safe_dump(email_metadata, default_flow_style=False)),
+            from_address=parsed_email.from_address,
+            to_address=parsed_email.to_address,
+            date=parsed_email.date,
+            github_username=self.config['github_username'],
+            headers=json.dumps(
+                parsed_email.record['ses']['mail']['headers']),
+            body=parsed_email.stripped_reply,
+            attachment_table=get_content_block(
+                'attachments',
+                produce_attachment_table(parsed_email.new_attachment_urls)
+            )
+        )
+        if not self.dryrun:
+            status, issue_data = repo.issues.post(
+                body={
+                    'title': parsed_email.subject,
+                    'body': issue_message,
+                    'labels': labels
+                }
+            )
+        else:
+            issue_data = {'number': 1}
+        logger.info(
+            f"Created new issue {issue_data['number']}.")
+        return issue_data
+
     def incoming_email(self):
         """When a new email is received by AWS SES, search the existing github
         issues for an issue where the title matches the email subject.
@@ -781,12 +972,12 @@ class EventHandler:
 
         parsed_email = Email(
             self.config, self.event, self.alerter, self.gh, self.dryrun)
-        repo = (
-            self.gh.repos[parsed_email.github_owner][parsed_email.github_repo])
 
         for plugin in plugin_list:
-            if plugin.is_matching_email(parsed_email):
-                plugin.transform_email(parsed_email)
+            is_matching_email = getattr(plugin, 'is_matching_email')
+            transform_email = getattr(plugin, 'transform_email')
+            if is_matching_email(parsed_email):
+                transform_email(parsed_email)
                 logger.debug(f'Email transformed by plugin {plugin.__name__}')
             else:
                 logger.debug(
@@ -800,168 +991,14 @@ class EventHandler:
             f"'{parsed_email.subject}' and issue number is "
             f"{parsed_email.issue_number}")
 
+        repo = (
+            self.gh.repos[parsed_email.github_owner][parsed_email.github_repo])
         if parsed_email.issue_number:
             issue = repo.issues[parsed_email.issue_number]
-            # Add a comment to the existing issue
-            status, issue_data = issue.get()
-            if issue_data['state'] == 'closed' and not self.dryrun:
-                status, issue_data = issue.patch(body={'state': 'open'})
-
-            if len(parsed_email.new_attachment_urls) > 0:
-                comment_attachments = '''| Attachments |\n| --- |\n'''
-                comment_attachments += '\n'.join(
-                    [f'| [{x}]({parsed_email.new_attachment_urls[x]}) |'
-                     for x in parsed_email.new_attachment_urls])
-            else:
-                comment_attachments = ''
-            # TODO : I'll ignore the "References" header for now because I
-            # don't know what AWS SES does with it
-            if not self.dryrun:
-                new_body = self.update_issue(
-                    issue_data['body'], parsed_email.message_id,
-                    parsed_email.new_attachment_urls)
-                status, issue_data = issue.patch(body={'body': new_body})
-
-            comment_message = COMMENT_TEMPLATE.substitute(
-                from_address=parsed_email.from_address,
-                to_address=parsed_email.to_address,
-                date=parsed_email.date,
-                headers=json.dumps(
-                    parsed_email.record['ses']['mail']['headers']),
-                body=parsed_email.stripped_reply,
-                comment_attachments=comment_attachments)
-            logger.info(
-                f"Adding a comment to the existing issue "
-                f"{parsed_email.issue_number}.")
-            if not self.dryrun:
-                status, comment_data = issue.comments.post(
-                    body={'body': comment_message})
+            self.add_comment_to_issue(issue, parsed_email)
         else:
-            # Create new issue
-            # Either label the issue with the label from the recipient_list or
-            # just use the username of the email to_address
-            labels = [
-                self.config['recipient_list'][parsed_email.to_address].get(
-                    'label', parsed_email.to_address.split('@')[0])]
-
-            email_metadata = {
-                'from': parsed_email.from_address,
-                'source': parsed_email.source,
-                'to': parsed_email.to_address,
-                'date': parsed_email.date,
-                'message_id': parsed_email.message_id
-            }
-
-            if len(parsed_email.new_attachment_urls) > 0:
-                email_metadata['attachments'] = parsed_email.new_attachment_urls
-
-            issue_message = ISSUE_TEMPLATE.substitute(
-                hidden_content_block=get_content_block(
-                    'hidden_content',
-                    yaml.safe_dump(email_metadata, default_flow_style=False)),
-                from_address=parsed_email.from_address,
-                to_address=parsed_email.to_address,
-                date=parsed_email.date,
-                github_username=self.config['github_username'],
-                headers=json.dumps(
-                    parsed_email.record['ses']['mail']['headers']),
-                body=parsed_email.stripped_reply,
-                attachment_table=get_content_block(
-                    'attachments',
-                    produce_attachment_table(parsed_email.new_attachment_urls)
-                )
-            )
-            if not self.dryrun:
-                status, issue_data = repo.issues.post(
-                    body={
-                        'title': parsed_email.subject,
-                        'body': issue_message,
-                        'labels': labels
-                    }
-                )
-            else:
-                issue_data = {'number': 1}
-            logger.info(
-                f"Created new issue {issue_data['number']}.")
-            if ('known_machine_senders' in self.config
-                and parsed_email.source in self.config['known_machine_senders']):
-                logger.info(
-                    f"Not sending an email to {parsed_email.source} because "
-                    f"they are a known machine sender.")
-                return True
-            body = (
-                self.config['initial_email_reply']
-                if 'initial_email_reply' in self.config
-                else '''Thanks for contacting us. We will get back to you as soon
-as possible. You can reply to this email if you have additional information
-to add to your request.''')
-            status, html_body = self.gh.markdown.post(
-                body={
-                    'text': body,
-                    'mode': 'gfm',
-                    'context': '/'.join([
-                        parsed_email.github_owner, parsed_email.github_repo])
-                }
-            )
-            text_url = "https://github.com/%s/%s/issues/%s" % (
-                parsed_email.github_owner,
-                parsed_email.github_repo,
-                issue_data['number']
-            )
-            issue_reference = '%s/%s#%s' % (
-                parsed_email.github_owner,
-                parsed_email.github_repo,
-                issue_data['number']
-            )
-            html_url = f'<a href="{text_url}">{issue_reference}</a>'
-            email_subject = SUBJECT_TEMPLATE.substitute(
-                subject=parsed_email.subject,
-                issue_number=issue_data['number'])
-
-            # TODO : what do we do if the inbound email had CCs?
-
-            logger.info(
-                f"Sending an email to {parsed_email.from_address} confirming "
-                f"that a new issue has been created.")
-            if not self.dryrun:
-                template_args = {
-                    'issue_reference': issue_reference,
-                    'provider': self.config['provider_name']}
-                message_id = send_email(
-                    email_subject=email_subject,
-                    from_name=(self.config['recipient_list']
-                               [parsed_email.to_address].get('name')),
-                    from_address=parsed_email.to_address,
-                    to_address=parsed_email.from_address,
-                    in_reply_to=parsed_email.message_id,
-                    references=parsed_email.message_id,
-                    html=EMAIL_HTML_TEMPLATE.substitute(
-                        html_body=html_body.decode('utf-8').format(html_url),
-                        **template_args),
-                    text=EMAIL_TEXT_TEMPLATE.substitute(
-                        text_body=body.format(text_url),
-                        **template_args))
-
-                # Add a reaction to the issue indicating the sender has been
-                # replied to
-                repo = (
-                    self.gh.repos[parsed_email.github_owner][parsed_email.github_repo])
-                issue = repo.issues[issue_data['number']]
-                status, reaction_data = issue.reactions.post(
-                    body={'content': 'rocket'},
-                    headers={
-                        'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
-                if int(status / 100) == 2:
-                    logger.info(
-                        f"Just added a reaction to issue "
-                        f"#{issue_data['number']} after sending an email")
-                else:
-                    logger.error(
-                        f"Unable to add reaction to issue "
-                        f"#{issue_data['number']} after {status} : "
-                        f"{reaction_data}")
-            else:
-                message_id = '1'
+            issue_data = self.create_issue(repo, parsed_email)
+            message_id = self.send_email_to_reporter(parsed_email, issue_data)
             logger.debug(
                 f'Initial email reply sent to {parsed_email.from_address} '
                 f'with Message-ID {message_id}')
@@ -1002,11 +1039,11 @@ to add to your request.''')
 
         if 'comment' not in message or 'issue' not in message:
             logger.debug('Non IssueCommentEvent webhook event received : %s'
-                        % self.event['Records'][0]['Sns']['Message'])
+                         % self.event['Records'][0]['Sns']['Message'])
             return False
-        if 'action' not in message :
+        if 'action' not in message:
             logger.error('action key missing from SNS message : %s'
-                        % self.event['Records'][0]['Sns']['Message'])
+                         % self.event['Records'][0]['Sns']['Message'])
             return False
 
         if message['action'] not in ['created', 'edited']:
@@ -1080,44 +1117,45 @@ to add to your request.''')
             message['issue']['number']
         )
 
-        if self.dryrun_tag not in message['comment']['body']:
-            logger.info(
-                f"Sending an email notification to {data['from']} with the "
-                f"new issue comment.")
-            message_id = send_email(
-                email_subject=f"Re: {subject}",
-                from_name=self.config['recipient_list'][data['to']].get(
-                    'name'),
-                from_address=data['to'],
-                to_address=data['from'],
-                in_reply_to=data['message_id'],
-                references=data['message_id'],
-                html=EMAIL_HTML_TEMPLATE.substitute(
-                    html_body=html_email_body,
-                    issue_reference=issue_reference,
-                    provider=self.config['provider_name']),
-                text=EMAIL_TEXT_TEMPLATE.substitute(
-                    text_body=text_email_body,
-                    issue_reference=issue_reference,
-                    provider=self.config['provider_name']))
-
-            self.update_issue(
-                message['issue']['body'],
-                message_id,
-                {})
-
-            # Add a reaction to the comment indicating it's been emailed out
-            comment = (self.gh.repos[message['repository']['full_name']].
-                issues.comments[message['comment']['id']])
-            status, reaction_data = comment.reactions.post(
-                body={'content': 'rocket'},
-                headers={
-                    'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
-            logger.info(f"Just added a reaction to a comment in issue "
-                        f"#{message['comment']['id']} after sending an email")
-        else:
+        if self.dryrun_tag in message['comment']['body']:
             logger.info(f"Running in dryrun mode. No email notification for "
                         f"{data['from']} sent")
+            return
+        logger.info(
+            f"Sending an email notification to {data['from']} with the "
+            f"new issue comment.")
+        message_id = send_email(
+            email_subject=f"Re: {subject}",
+            from_name=self.config['recipient_list'][data['to']].get(
+                'name'),
+            from_address=data['to'],
+            to_address=data['from'],
+            in_reply_to=data['message_id'],
+            references=data['message_id'],
+            html=EMAIL_HTML_TEMPLATE.substitute(
+                html_body=html_email_body,
+                issue_reference=issue_reference,
+                provider=self.config['provider_name']),
+            text=EMAIL_TEXT_TEMPLATE.substitute(
+                text_body=text_email_body,
+                issue_reference=issue_reference,
+                provider=self.config['provider_name']))
+
+        self.update_issue(
+            message['issue']['body'],
+            message_id,
+            {})
+
+        # Add a reaction to the comment indicating it's been emailed out
+        comment = (self.gh.repos[message['repository']['full_name']].
+                   issues.comments[message['comment']['id']])
+        status, reaction_data = comment.reactions.post(
+            body={'content': 'rocket'},
+            headers={
+                'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
+        logger.info(f"Just added a reaction to a comment in issue "
+                    f"#{message['comment']['id']} after sending an email")
+
 
 def lambda_handler(event, context):
     """Given an event determine if it's and incoming email or an SNS webhook alert
