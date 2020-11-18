@@ -1,15 +1,15 @@
+import cgi
+import dateutil.parser
+import logging
 import os
 import random
-import time
 import re
-import cgi
-import logging
-import dateutil.parser
-import boto3
-import requests
-from agithub.GitHub import GitHub
-import bs4
+import time
 
+from agithub.GitHub import GitHub
+import boto3
+import bs4
+import requests
 
 # This must be first verified with AWS SES by sending an email and hitting the link
 # TODO : Do this programatically
@@ -50,10 +50,10 @@ def verify_email(username):
     identities = get_paginated_results(
         'ses', 'list_identities', 'Identities',
         {'IdentityType': 'EmailAddress'})
-    logging.info('Verified identities : {}'.format(identities))
+    logging.info(f'Verified identities : {identities}')
     if email_address not in identities:
         client = boto3.client('ses')
-        logging.info('Initiating identity verification : {}'.format(email_address))
+        logging.info(f'Initiating identity verification : {email_address}')
         client.verify_email_identity(EmailAddress=email_address)
         email = get_restmail(
             username,
@@ -75,7 +75,7 @@ def get_restmail(username, test_func):
     email = None
     while True:
         checks += 1
-        response = requests.get('https://restmail.net/mail/{}'.format(username))
+        response = requests.get(f'https://restmail.net/mail/{username}')
         for item in response.json():
             if test_func(item):
                 email = item
@@ -94,7 +94,8 @@ def get_words(length):
 def get_body():
     words = get_words(10)
     text = '\n'.join(get_words(10))
-    html = '<ul>\n{}\n</ul>'.format('\n'.join(['<li>{}</li>'.format(x) for x in words]))
+    list_items = '\n'.join([f'<li>{x}</li>' for x in words])
+    html = f'<ul>\n{list_items}\n</ul>'
     return text, html
 
 
@@ -121,7 +122,7 @@ def test_all():
 
     email_address = RESTMAIL_ADDRESS_FORMAT.format(RESTMAIL_USER)
     result = requests.request(
-        'delete', 'https://restmail.net/mail/{}'.format(RESTMAIL_USER))
+        'delete', f'https://restmail.net/mail/{RESTMAIL_USER}')
     assert result.status_code == 200
 
     assert verify_email(RESTMAIL_USER)
@@ -141,7 +142,7 @@ def test_all():
         },
         ReturnPath=RETURN_PATH)
     message_id = result.get('MessageId')
-    logging.info('Message {} sent to {}'.format(email_address, message_id))
+    logging.info(f'Message {email_address} sent to {message_id}')
 
     # Check that SES send succeeded
     assert message_id is not None
@@ -187,7 +188,7 @@ def test_all():
         'time': reply_datetime.strftime('%H:%M'),
         'from': cgi.escape(email['headers']['from']),
         'quote': reply_quote,
-        'message': '<b>{}</b>'.format(message)
+        'message': f'<b>{message}</b>'
     }
 
     # TODO : Message ID should be the same so it's clear it's a reply
@@ -195,7 +196,7 @@ def test_all():
         Source=email_address,
         Destination={'ToAddresses': [email['from'][0]['address']]},
         Message={
-            'Subject': {'Data': 'Re: {}'.format(email['headers']['subject'])},
+            'Subject': {'Data': f"Re: {email['headers']['subject']}"},
             'Body': {
                 'Html': {'Data': reply.format(**fields)}
             }
