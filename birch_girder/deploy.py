@@ -801,6 +801,19 @@ they're complete''')
 
     in_memory_data.close()
 
+    # Lambda function event invoke config
+
+    response = client.get_function_event_invoke_config(
+        FunctionName=args.lambda_function_name)
+    if response['MaximumRetryAttempts'] != 0:
+        response = client.update_function_event_invoke_config(
+            FunctionName=args.lambda_function_name,
+            MaximumRetryAttempts=0
+        )
+        green_print(
+            'AWS Lambda function invoke config updated. MaximumRetryAttempts '
+            'set to %s' % response['MaximumRetryAttempts'])
+
     # SES permission to invoke Lambda function
     statement_id = 'GiveSESPermissionToInvokeFunction'
     try:
