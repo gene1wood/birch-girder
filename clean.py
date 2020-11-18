@@ -1,14 +1,15 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import collections
 import argparse
+import collections
 import json
-import yaml
+
 from agithub.GitHub import GitHub  # pip install agithub
+from botocore.exceptions import ClientError
 import agithub.base
 import boto3
-from botocore.exceptions import ClientError
+import yaml
 
 END_COLOR = '\033[0m'
 GREEN_COLOR = '\033[92m'
@@ -100,17 +101,16 @@ def update_hookio_env_vars(hook_io, new_env_vars, current_env_vars=None):
     if created_vars or updated_vars or deleted_vars:
         status, result = hook_io.env.post(body={'env': data})
         if status != 200 or result.get('status') != 'updated':
-            print("Got error {} when attempting to set hook.io env vars".format(
-                result))
+            print(f"Got error {result} when attempting to set hook.io env vars")
         else:
             message = ''
             if created_vars:
-                message += 'Created {} '.format(created_vars)
+                message += f'Created {created_vars} '
             if updated_vars:
-                message += 'Updated {} '.format(updated_vars)
+                message += f'Updated {updated_vars} '
             if deleted_vars:
-                message += 'Deleted {}'.format(deleted_vars)
-            green_print("hook.io env variables changed : {}".format(message))
+                message += f'Deleted {deleted_vars}'
+            green_print(f"hook.io env variables changed : {message}")
 
 
 def clean(config, args):
@@ -143,8 +143,11 @@ def clean(config, args):
         print('''
 Your hook.io API key isn't valid. Make sure the key was set up correctly.''')
         exit(1)
-    hook_url = 'https://hook.io/{}/{}'.format(
-        hook_io_user['user']['name'], args.hookio_service_name)
+    hook_url = '/'.join([
+        'https://hook.io',
+        hook_io_user['user']['name'],
+        args.hookio_service_name
+    ])
 
     client_iam = boto3.client('iam')
     # For each recipient
@@ -152,20 +155,18 @@ Your hook.io API key isn't valid. Make sure the key was set up correctly.''')
     #    Delete GitHub webhook
     #    Delete hook.io env var GitHub webhook secret
     for recipient in config['recipient_list']:
-        print('Processing https://github.com/{}/{}'.format(
-            config['recipient_list'][recipient]['owner'],
-            config['recipient_list'][recipient]['repo']))
+        owner_name = config['recipient_list'][recipient]['owner']
+        repo_name = config['recipient_list'][recipient]['repo']
+        print(f'Processing https://github.com/{owner_name}/{repo_name}')
         if ('owner' not in config['recipient_list'][recipient]
                 or 'repo' not in config['recipient_list'][recipient]):
-            print('  Recipient %s missing owner or repo. Skipping' % recipient)
+            print(f'  Recipient {recipient} missing owner or repo. Skipping')
             continue
 
-        repo = (
-            gh.repos[config['recipient_list'][recipient]['owner']]
-            [config['recipient_list'][recipient]['repo']])
+        repo = gh.repos[owner_name][repo_name]
         status, repo_data = repo.get()
         if repo_data.get('name') is None:
-            print('  Leaving GitHub repo %s in place' % repo_data['name'])
+            print(f"  Leaving GitHub repo {repo_data['name']} in place")
 
         # Delete GitHub webhook
         repo_hooks = repo.hooks
@@ -179,17 +180,17 @@ Your hook.io API key isn't valid. Make sure the key was set up correctly.''')
                 green_print('  GitHub webhook %s deleted from repo %s' %
                             (hook_data['id'], repo_data['html_url']))
             else:
-                raise Exception('GitHub webhook deletion failed {}'.format(
-                    hook_delete_result))
+                raise Exception(f'GitHub webhook deletion failed {hook_delete_result}')
 
         # Delete hook.io env var github-webhook-secret-map entry
         status, env_vars = hook_io.env.get()
         repo_secret_map = env_vars.get('github-webhook-secret-map', {})
         if type(repo_secret_map) != dict:
             repo_secret_map = json.loads(repo_secret_map)
-        owner_repo_key = '{}/{}'.format(
-            config['recipient_list'][recipient]['owner'],
-            config['recipient_list'][recipient]['repo'])
+        owner_repo_key = '/'.join([
+            owner_name,
+            repo_name
+        ])
         if owner_repo_key in repo_secret_map:
             del(repo_secret_map[owner_repo_key])
             update_hookio_env_vars(
@@ -249,7 +250,7 @@ Your hook.io API key isn't valid. Make sure the key was set up correctly.''')
                         (args.github_iam_username, policy_name))
 
         client_iam.delete_user(UserName=args.github_iam_username)
-        green_print('Deleted AWS IAM user %s' % args.github_iam_username)
+        green_print(f'Deleted AWS IAM user {args.github_iam_username}')
     except:
         pass
 
@@ -266,7 +267,7 @@ Your hook.io API key isn't valid. Make sure the key was set up correctly.''')
                     (args.ses_rule_name, args.ses_rule_set_name))
 
     # Leave SES Rule Set in place
-    print('Leaving AWS SES rule set %s in place' % args.ses_rule_set_name)
+    print(f'Leaving AWS SES rule set {args.ses_rule_set_name} in place')
 
     def remove_lambda_permission(statement_id, function_name, policy):
         if (policy is not None and statement_id in
@@ -301,7 +302,7 @@ Your hook.io API key isn't valid. Make sure the key was set up correctly.''')
         response = client_lambda.delete_function(
             FunctionName=args.lambda_function_name
         )
-        green_print('Deleted AWS Lambda function %s' % args.lambda_function_name)
+        green_print(f'Deleted AWS Lambda function {args.lambda_function_name}')
     except ClientError:
         pass
 
@@ -321,7 +322,7 @@ Your hook.io API key isn't valid. Make sure the key was set up correctly.''')
                         (args.lambda_iam_role_name, policy_name))
 
         client_iam.delete_role(RoleName=args.lambda_iam_role_name)
-        green_print('Deleted AWS IAM role %s' % args.lambda_iam_role_name)
+        green_print(f'Deleted AWS IAM role {args.lambda_iam_role_name}')
     except:
         pass
 
@@ -376,7 +377,7 @@ Your hook.io API key isn't valid. Make sure the key was set up correctly.''')
                 Bucket=config['ses_payload_s3_bucket_name'],
                 Policy=json.dumps(policy)
             )
-            green_print('AWS S3 Bucket policy updated and statement %s removed' % statement_id)
+            green_print(f'AWS S3 Bucket policy updated and statement {statement_id} removed')
         else:
             client_s3.delete_bucket_policy(
                 Bucket=config['ses_payload_s3_bucket_name']
@@ -384,7 +385,7 @@ Your hook.io API key isn't valid. Make sure the key was set up correctly.''')
             green_print('AWS S3 Bucket policy removed')
 
     # Leave S3 bucket in place
-    print('Leaving AWS S3 Bucket %s in place' % config['ses_payload_s3_bucket_name'])
+    print(f"Leaving AWS S3 Bucket {config['ses_payload_s3_bucket_name']} in place")
 
     # Leave S3 contents ses-payloads/
     print('Leaving s3 files in place as the lifecycle configuration will '
@@ -398,7 +399,7 @@ Your hook.io API key isn't valid. Make sure the key was set up correctly.''')
             response = client_sns.get_topic_attributes(
                 TopicArn=config['alert_sns_topic_arn'])
             client_sns.delete_topic(TopicArn=config['alert_sns_topic_arn'])
-            green_print('AWS SNS Topic %s deleted' % response['Attributes']['TopicArn'])
+            green_print(f"AWS SNS Topic {response['Attributes']['TopicArn']} deleted")
         except ClientError:
             pass
 
@@ -407,7 +408,7 @@ Your hook.io API key isn't valid. Make sure the key was set up correctly.''')
         response = client_sns.get_topic_attributes(
             TopicArn=config['sns_topic_arn'])
         client_sns.delete_topic(TopicArn=config['sns_topic_arn'])
-        green_print('AWS SNS Topic %s deleted' % response['Attributes']['TopicArn'])
+        green_print(f"AWS SNS Topic {response['Attributes']['TopicArn']} deleted")
     except ClientError:
         pass
 
