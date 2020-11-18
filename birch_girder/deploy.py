@@ -4,7 +4,7 @@
 import os.path
 import time
 import json
-import collections
+import collections.abc
 from getpass import getpass
 import argparse
 import zipfile
@@ -24,20 +24,25 @@ GREEN_COLOR = '\033[92m'
 BLUE_COLOR = '\033[94m'
 
 
-class Config(collections.MutableMapping):
+class Config(collections.abc.MutableMapping):
     def __init__(self, filename, *args, **kwargs):
         self.filename = filename
+        self.save_on_set = False
         self.store = dict()
         self.load()
         self.update(dict(*args, **kwargs))
+        self.save_on_set = True
 
     def __setitem__(self, key, value):
-        self.store[key] = value
-        self.save()
+        if (key not in self.store) or (yaml.dump(value) != yaml.dump(self.store[key])):
+            self.store[key] = value
+            if self.save_on_set:
+                self.save()
 
     def __delitem__(self, key):
-        del self.store[key]
-        self.save()
+        if key in self.store:
+            del self.store[key]
+            self.save()
 
     def __getitem__(self, key):
         return self.store[key]
@@ -299,14 +304,16 @@ Girder will use to interact with GitHub''')
     response = client.create_topic(  # This action is idempotent
         Name=config['sns_topic']
     )
-    config['sns_topic_arn'] = response['TopicArn']
+    if config.get('sns_topic_arn') != response['TopicArn']:
+        config['sns_topic_arn'] = response['TopicArn']
 
     # Alert SNS Topic
     if 'alert_sns_topic' in config:
         response = client.create_topic(  # This action is idempotent
             Name=config['alert_sns_topic']
         )
-        config['alert_sns_topic_arn'] = response['TopicArn']
+        if config['alert_sns_topic'] != response['TopicArn']:
+            config['alert_sns_topic_arn'] = response['TopicArn']
     elif early_run:
         print('''No alert_sns_topic in config so no alert topic will be setup.
 You can add an alert topic to config later and re-run deploy if you would like
@@ -657,7 +664,7 @@ they're complete''')
     zip_file_name = 'artifacts/birch-girder.zip'
     hash_version_map_filename = 'artifacts/.hash_version_map.json'
     layers = get_paginated_results('lambda', 'list_layers', 'Layers')
-    layer_name = '%s-layer' % args.lambda_function_name
+    layer_name = 'birch-girder-layer'
     publish_layer = False
     with open(zip_file_name, mode='rb') as f:
         try:
@@ -702,7 +709,7 @@ they're complete''')
                         % layer_version_arn)
             hash_map[digest] = layer_version_arn
             with open(hash_version_map_filename, 'w') as hash_map_file:
-                json.dump(hash_map, hash_map_file)
+                json.dump(hash_map, hash_map_file, indent=4)
             function_needs_update = True
 
 

@@ -22,7 +22,7 @@ for free (as in beer).
 
 * A free GitHub user account
 * A free Amazon Web Services (AWS) account. This requires giving AWS a credit
-  card but as long as you send and receive 1000 emails or less per month it's
+  card but as long as you receive 1000 emails or less per month it's
   free ([$0.10 for every additional 1000 emails](https://aws.amazon.com/ses/pricing/))
 * A domain name for which you can have all email destined to addresses in that
   domain, sent to AWS. This can be a subdomain of an existing domain. If you have
