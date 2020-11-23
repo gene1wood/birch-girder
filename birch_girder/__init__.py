@@ -782,7 +782,8 @@ class EventHandler:
         :return: The message ID of the email sent
         """
         if ('known_machine_senders' in self.config
-                and parsed_email.source in self.config['known_machine_senders']):
+                and parsed_email.source.lower() in
+                [x.lower() for x in self.config['known_machine_senders']]):
             logger.info(
                 f"Not sending an email to {parsed_email.source} because "
                 f"they are a known machine sender.")
