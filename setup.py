@@ -11,7 +11,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='birch_girder',
-    version='1.1.0',
+    version='1.2.0',
     description='An Email Interface for GitHub Issues',
     long_description=long_description,
     url='https://github.com/gene1wood/birch-girder',

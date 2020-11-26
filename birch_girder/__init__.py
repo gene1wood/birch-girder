@@ -384,6 +384,7 @@ class Email:
         self.email_body_text = ''
         self.stripped_reply = ''
         self.timestamp = 0
+        self.publish_to_github = True
         self.new_attachment_urls = {}
         self.s3 = boto3.client('s3')
         self.parse_email()
@@ -991,6 +992,10 @@ to add to your request.''')
             f"{parsed_email.message_id}. The subject is "
             f"'{parsed_email.subject}' and issue number is "
             f"{parsed_email.issue_number}")
+
+        if not parsed_email.publish_to_github:
+            logger.info('This inbound email will not be published to GitHub')
+            return
 
         repo = (
             self.gh.repos[parsed_email.github_owner][parsed_email.github_repo])
