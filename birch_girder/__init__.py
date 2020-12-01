@@ -617,7 +617,23 @@ class Email:
                     }
                 )
             )
-            html_url = data['content']['html_url']
+            if int(status / 100) != 2:
+                if status == 422 and '"sha" wasn\'t supplied' in data.get('message',''):
+                    # The file already exists
+                    status, data = (
+                        self.gh.repos[self.github_owner]
+                        [self.github_repo].contents[path].get()
+                    )
+                    logger.info(
+                        'The attempt to add the attachment failed because it '
+                        'already exists. Instead assuming the content is the '
+                        'same, it will just be referenced in this issue')
+                    html_url = data['html_url']
+                else:
+                    logger.error(f'Failed to save attachment {filename} {status} {data}')
+                    continue
+            else:
+                html_url = data['content']['html_url']
             self.new_attachment_urls[filename] = html_url
 
 
