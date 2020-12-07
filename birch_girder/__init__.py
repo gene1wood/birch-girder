@@ -804,7 +804,7 @@ class EventHandler:
             logger.info(
                 f"Not sending an email to {parsed_email.source} because "
                 f"they are a known machine sender.")
-            return True
+            return None
         body = (
             self.config['initial_email_reply']
             if 'initial_email_reply' in self.config
@@ -1021,9 +1021,10 @@ to add to your request.''')
         else:
             issue_data = self.create_issue(repo, parsed_email)
             message_id = self.send_email_to_reporter(parsed_email, issue_data)
-            logger.debug(
-                f'Initial email reply sent to {parsed_email.from_address} '
-                f'with Message-ID {message_id}')
+            if message_id is not None:
+                logger.debug(
+                    f'Initial email reply sent to {parsed_email.from_address} '
+                    f'with Message-ID {message_id}')
 
     def github_hook(self):
         """Process new GitHub issue comments.
