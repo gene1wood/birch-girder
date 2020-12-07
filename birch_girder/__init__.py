@@ -413,10 +413,10 @@ class Email:
             # to_address
             # Note : It's possible we could determine the actual correct
             #  To address from record['ses']['receipt']['recipients']
-            if possible_recipient in [
+            if possible_recipient.lower() in [
                     x.lower() for x
                     in self.record['ses']['mail']['destination']]:
-                self.to_address = possible_recipient.lower()
+                self.to_address = possible_recipient
                 logger.debug(
                     f"Found possible recipient {possible_recipient} in "
                     f"destination list "
@@ -424,7 +424,7 @@ class Email:
                 break
 
         if not self.to_address:
-            self.to_address = possible_recipients[0].lower()
+            self.to_address = possible_recipients[0]
             logger.debug('No applicable email was found in destination list '
                          f"so we will use {self.to_address} : "
                          f"{self.record['ses']['mail']['destination']}")
