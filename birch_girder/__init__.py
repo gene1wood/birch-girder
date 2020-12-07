@@ -369,7 +369,7 @@ class Email:
         self.raw_subject = (self.record['ses']['mail']
                             ['commonHeaders']['subject'])
         self.from_address = ''
-        self.source = self.record['ses']['mail']['source'].lower()
+        self.source = ''
         self.to_address = ''
         self.s3_payload_filename = self.record['ses']['mail']['messageId']
         self.message_id = self.record['ses']['mail']['commonHeaders'].get(
@@ -441,11 +441,17 @@ class Email:
                     self.to_address
                 ))
 
-        try:
-            self.source = clean_sender_address(self.source)
-        except Exception as e:
-            logger.error(
-                f'Failed to clean sender address {self.source} due to "{e}"')
+        if 'replyTo' in self.record['ses']['mail']['commonHeaders']:
+            self.source = (
+                self.record['ses']['mail']['commonHeaders']['replyTo'][0])
+        else:
+            try:
+                self.source = clean_sender_address(
+                    self.record['ses']['mail']['source'])
+            except Exception as e:
+                logger.error(
+                    f"Failed to clean sender address "
+                    f"{self.record['ses']['mail']['source']} due to \"{e}\"")
 
         self.github_owner = self.config['recipient_list'][self.to_address].get(
             'owner')
