@@ -369,7 +369,7 @@ class Email:
         self.raw_subject = (self.record['ses']['mail']
                             ['commonHeaders']['subject'])
         self.from_address = ''
-        self.source = self.record['ses']['mail']['source'].lower()
+        self.source = ''
         self.to_address = ''
         self.s3_payload_filename = self.record['ses']['mail']['messageId']
         self.message_id = self.record['ses']['mail']['commonHeaders'].get(
@@ -413,10 +413,10 @@ class Email:
             # to_address
             # Note : It's possible we could determine the actual correct
             #  To address from record['ses']['receipt']['recipients']
-            if possible_recipient in [
+            if possible_recipient.lower() in [
                     x.lower() for x
                     in self.record['ses']['mail']['destination']]:
-                self.to_address = possible_recipient.lower()
+                self.to_address = possible_recipient
                 logger.debug(
                     f"Found possible recipient {possible_recipient} in "
                     f"destination list "
@@ -424,7 +424,7 @@ class Email:
                 break
 
         if not self.to_address:
-            self.to_address = possible_recipients[0].lower()
+            self.to_address = possible_recipients[0]
             logger.debug('No applicable email was found in destination list '
                          f"so we will use {self.to_address} : "
                          f"{self.record['ses']['mail']['destination']}")
@@ -441,11 +441,17 @@ class Email:
                     self.to_address
                 ))
 
-        try:
-            self.source = clean_sender_address(self.source)
-        except Exception as e:
-            logger.error(
-                f'Failed to clean sender address {self.source} due to "{e}"')
+        if 'replyTo' in self.record['ses']['mail']['commonHeaders']:
+            self.source = (
+                self.record['ses']['mail']['commonHeaders']['replyTo'][0])
+        else:
+            try:
+                self.source = clean_sender_address(
+                    self.record['ses']['mail']['source'])
+            except Exception as e:
+                logger.error(
+                    f"Failed to clean sender address "
+                    f"{self.record['ses']['mail']['source']} due to \"{e}\"")
 
         self.github_owner = self.config['recipient_list'][self.to_address].get(
             'owner')
@@ -804,7 +810,7 @@ class EventHandler:
             logger.info(
                 f"Not sending an email to {parsed_email.source} because "
                 f"they are a known machine sender.")
-            return True
+            return None
         body = (
             self.config['initial_email_reply']
             if 'initial_email_reply' in self.config
@@ -1021,9 +1027,10 @@ to add to your request.''')
         else:
             issue_data = self.create_issue(repo, parsed_email)
             message_id = self.send_email_to_reporter(parsed_email, issue_data)
-            logger.debug(
-                f'Initial email reply sent to {parsed_email.from_address} '
-                f'with Message-ID {message_id}')
+            if message_id is not None:
+                logger.debug(
+                    f'Initial email reply sent to {parsed_email.from_address} '
+                    f'with Message-ID {message_id}')
 
     def github_hook(self):
         """Process new GitHub issue comments.
