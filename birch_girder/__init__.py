@@ -370,6 +370,7 @@ class Email:
                             ['commonHeaders']['subject'])
         self.from_address = ''
         self.source = ''
+        self.replyto = ''
         self.to_address = ''
         self.s3_payload_filename = self.record['ses']['mail']['messageId']
         self.message_id = self.record['ses']['mail']['commonHeaders'].get(
@@ -442,16 +443,15 @@ class Email:
                 ))
 
         if 'replyTo' in self.record['ses']['mail']['commonHeaders']:
-            self.source = (
+            self.replyto = (
                 self.record['ses']['mail']['commonHeaders']['replyTo'][0])
-        else:
-            try:
-                self.source = clean_sender_address(
-                    self.record['ses']['mail']['source'])
-            except Exception as e:
-                logger.error(
-                    f"Failed to clean sender address "
-                    f"{self.record['ses']['mail']['source']} due to \"{e}\"")
+        try:
+            self.source = clean_sender_address(
+                self.record['ses']['mail']['source'])
+        except Exception as e:
+            logger.error(
+                f"Failed to clean sender address "
+                f"{self.record['ses']['mail']['source']} due to \"{e}\"")
 
         self.github_owner = self.config['recipient_list'][self.to_address].get(
             'owner')
@@ -519,9 +519,9 @@ class Email:
             else:
                 logger.debug(
                     "Encountered an inbound email that has a subject "
-                    "which matches issue #%s in %s/%s but which was sent "
-                    "by %s not by %s who created the existing issue. "
-                    "Creating a new issue." % (
+                    "which matches issue #%s in %s/%s but which has a mail "
+                    "envelope MAILFROM source of %s not %s who created the "
+                    "existing issue. Creating a new issue." % (
                         issue_search_result['number'],
                         self.github_owner,
                         self.github_repo,
@@ -804,13 +804,24 @@ class EventHandler:
         :param issue_data: Dictionary of attributes of the GitHub issue
         :return: The message ID of the email sent
         """
-        if ('known_machine_senders' in self.config
-                and parsed_email.source.lower() in
-                [x.lower() for x in self.config['known_machine_senders']]):
-            logger.info(
-                f"Not sending an email to {parsed_email.source} because "
-                f"they are a known machine sender.")
-            return None
+        if 'known_machine_senders' in self.config:
+            known_machine_senders = [x.lower() for x
+                                     in self.config['known_machine_senders']]
+            should_send_email = True
+            if parsed_email.source.lower() in known_machine_senders:
+                should_send_email = False
+            if parsed_email.from_address.lower() in known_machine_senders:
+                # This is a value like "John Smith <john@example.com>"
+                should_send_email = False
+            if (parsed_email.replyto != '' and parsed_email.replyto
+                    in known_machine_senders):
+                should_send_email = False
+            if not should_send_email:
+                logger.info(
+                    f"Not sending an email to {parsed_email.source}/"
+                    f"{parsed_email.from_address}/{parsed_email.replyto} "
+                    f"because they are a known machine sender.")
+                return None
         body = (
             self.config['initial_email_reply']
             if 'initial_email_reply' in self.config
@@ -842,8 +853,10 @@ to add to your request.''')
 
         # TODO : what do we do if the inbound email had CCs?
 
+        to_address = (parsed_email.from_address if parsed_email.replyto == ''
+                      else parsed_email.replyto)
         logger.info(
-            f"Sending an email to {parsed_email.from_address} confirming "
+            f"Sending an email to {to_address} confirming "
             f"that a new issue has been created.")
         if self.dryrun:
             return '1'
@@ -855,7 +868,7 @@ to add to your request.''')
             from_name=(self.config['recipient_list']
                        [parsed_email.to_address].get('name')),
             from_address=parsed_email.to_address,
-            to_address=parsed_email.from_address,
+            to_address=to_address,
             in_reply_to=parsed_email.message_id,
             references=parsed_email.message_id,
             html=EMAIL_HTML_TEMPLATE.substitute(
