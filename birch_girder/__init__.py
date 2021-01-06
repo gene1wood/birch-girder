@@ -462,10 +462,12 @@ class Email:
         if not self.raw_body:
             self.get_email_payload()
             self.parse_email_payload()
-        self.stripped_reply = EmailReplyParser.parse_reply(
-            self.email_body_text
-            if self.email_body_text != ''
-            else self.email_body)
+        body_to_parse = (self.email_body_text if self.email_body_text != ''
+                         else self.email_body)
+        if self.issue_number:
+            self.stripped_reply = EmailReplyParser.parse_reply(body_to_parse)
+        else:
+            self.stripped_reply = body_to_parse
 
     def parse_subject(self):
         """Parse the raw email subject, stripping off the leading Re: and
