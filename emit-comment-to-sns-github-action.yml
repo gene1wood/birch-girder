@@ -32,11 +32,11 @@ jobs:
 
       - name: Configure AWS Credentials
         id: configure-aws
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.BIRCH_GIRDER_AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.BIRCH_GIRDER_AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.BIRCH_GIRDER_SNS_TOPIC_REGION }}
       - name: Emit issue comment to AWS SNS
         id: emit-comment
-        run: echo "::set-output name=message_id::$(aws sns publish --topic-arn $BIRCH_GIRDER_SNS_TOPIC_ARN --message file://$GITHUB_EVENT_PATH --output text --query MessageId)"
+        run: echo "name=message_id::$(aws sns publish --topic-arn $BIRCH_GIRDER_SNS_TOPIC_ARN --message file://$GITHUB_EVENT_PATH --output text --query MessageId)" >> $GITHUB_OUTPUT
