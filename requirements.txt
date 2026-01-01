@@ -4,5 +4,4 @@ agithub
 PyYAML
 python-dateutil
 email_reply_parser
-pyzmail36
 beautifulsoup4

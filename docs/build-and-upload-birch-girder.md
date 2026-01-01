@@ -7,13 +7,14 @@
 1. Run this command to fetch wheels of the dependencies using the 
    [`manylinux` project](https://github.com/pypa/manylinux)
    ```
+   mkdir -p package/python
    pip install \
      --platform manylinux2014_x86_64 \
-     --target=package \
+     --target=package/python \
      --implementation cp \
-     --python-version 3.10 \
+     --python-version 3.14 \
      --only-binary=:all: --upgrade \
-     botocore boto3 agithub PyYAML python-dateutil email_reply_parser pyzmail36 beautifulsoup4
+     botocore boto3 agithub PyYAML python-dateutil email_reply_parser beautifulsoup4
    ```
 2. Zip up the results
    ```

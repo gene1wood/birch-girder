@@ -11,7 +11,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='birch_girder',
-    version='1.2.0',
+    version='1.3.0',
     description='An Email Interface for GitHub Issues',
     long_description=long_description,
     url='https://github.com/gene1wood/birch-girder',
@@ -35,10 +35,10 @@ setup(
         'PyYAML',
         'python-dateutil',
         'email_reply_parser',
-        'pyzmail36',
-        'beautifulsoup4'],
+        'beautifulsoup4',
+        'aws-lambda-persistence'],
     extras_require={
-        "deploy":  ["pynacl", "boto3", "PyYAML", "agithub"]
+        "deploy":  ["pynacl", "boto3", "PyYAML", "agithub", "aws-lambda-persistence"]
     },
     entry_points={
         "console_scripts": [
