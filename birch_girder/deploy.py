@@ -21,6 +21,7 @@ from nacl import encoding, public
 END_COLOR = '\033[0m'
 GREEN_COLOR = '\033[92m'
 BLUE_COLOR = '\033[94m'
+AWS_LAMBDA_PERSISTENCE_LAYER_ARN = 'arn:aws:lambda:us-west-2:220481034027:layer:aws-lambda-persistence:2'
 
 
 class Config(collections.abc.MutableMapping):
@@ -210,6 +211,7 @@ to all repos which you'd like Birch Girder to manage.''')
     defaults = {
         'ses_payload_s3_prefix': 'ses-payloads/',
         'sns_topic': 'GithubWebhookTopic',
+        'ses_notification_sns_topic': 'BirchGirderSESNotificationTopic',
         'sns_region': region
     }
     for default in defaults:
@@ -269,11 +271,44 @@ Girder will use to interact with GitHub''')
 
         note = 'birch-girder'
         note_url = 'http://github.com/gene1wood/birch-girder'
-        scopes = ['repo']
+        scopes = [
+            'repo',
+            'workflow'  # This is required for modification of the GitHub Actions file emit-comment-to-sns-github-action.yml
+        ]
 
-        # Note this method of obtaining a token is now deprecated and stops working later in 2020
+        # Note this method of obtaining a token is now stopped working in 2020
         # https://developer.github.com/changes/2020-02-14-deprecating-oauth-auth-endpoint/
         # TODO : Replace this with a non deprecated method
+
+        # We can't move from classic to fine grained PATs yet because it's not implemented : https://github.com/github/roadmap/issues/601
+        # When it's time for fine grained PATS the scopes will need to include
+        # None
+        # * gh.search.issues.get
+        #
+        # "Contents" repository permissions (write)
+        # * gh.repos[self.github_owner][self.github_repo].contents[path].put
+        # * gh.repos[self.github_owner][self.github_repo].contents[path].get
+        # * gh.markdown.post
+        #
+        # "Issues" repository permissions (write)
+        # * gh.repos[parsed_email.github_owner][parsed_email.github_repo].issues[issue_data['number']].reactions.post
+        # * gh.repos[parsed_email.github_owner][parsed_email.github_repo].issues.post
+        # * gh.repos[parsed_email.github_owner][parsed_email.github_repo].issues[parsed_email.issue_number].get
+        # * gh.repos[parsed_email.github_owner][parsed_email.github_repo].issues[parsed_email.issue_number].patch
+        # * gh.repos[parsed_email.github_owner][parsed_email.github_repo].issues[parsed_email.issue_number].comments.post
+        # * gh.repos[parsed_email.github_owner][parsed_email.github_repo].issues[parsed_email.issue_number].comments.get
+        # * gh.repos[parsed_email.github_owner][parsed_email.github_repo].issues[parsed_email.issue_number].comments.patch
+        # * gh.repos[parsed_email.github_owner][parsed_email.github_repo].issues[parsed_email.issue_number].comments[message['comment']['id']].reactions.post
+        #
+        # "Pull requests" repository permissions (write)
+        # * gh.repos[parsed_email.github_owner][parsed_email.github_repo].issues[parsed_email.issue_number].patch
+        # * gh.repos[parsed_email.github_owner][parsed_email.github_repo].issues[parsed_email.issue_number].comments.post
+        # * gh.repos[parsed_email.github_owner][parsed_email.github_repo].issues[parsed_email.issue_number].comments.get
+        # * gh.repos[parsed_email.github_owner][parsed_email.github_repo].issues[parsed_email.issue_number].comments.patch
+        #
+        # "Workflows" repository permissions (write)
+        # * deploy.py : gh.repos[owner][repo].contents['.github']['workflows'][args.github_action_filename].put
+
         auth = GitHub(config['github_username'], password)
         status, authorization_data = auth.authorizations.post(body={
             'scopes': scopes,
@@ -303,6 +338,13 @@ Girder will use to interact with GitHub''')
     )
     if config.get('sns_topic_arn') != response['TopicArn']:
         config['sns_topic_arn'] = response['TopicArn']
+
+    # SES Notification SNS Topic
+    response = client.create_topic(  # This action is idempotent
+        Name=config['ses_notification_sns_topic']
+    )
+    if config.get('ses_notification_sns_topic_arn') != response['TopicArn']:
+        config['ses_notification_sns_topic_arn'] = response['TopicArn']
 
     # Alert SNS Topic
     if 'alert_sns_topic' in config:
@@ -515,6 +557,47 @@ they're complete''')
     if not all_verifications_completed:
         return
 
+    # SES Notifications
+    recipient_email_address_list = [x.lower() for x in list(config['recipient_list'].keys())]
+    client = boto3.client('ses')
+    response = client.list_identities()
+    recipient_to_ses_identity_map = {}
+    for recipient_email_address in recipient_email_address_list:
+        if recipient_email_address in response['Identities']:
+            recipient_to_ses_identity_map[recipient_email_address] = response['Identities'][recipient_email_address]
+        elif recipient_email_address.partition("@")[2] in response['Identities']:
+            recipient_to_ses_identity_map[recipient_email_address] = recipient_email_address.partition("@")[2]
+        else:
+            recipient_to_ses_identity_map[recipient_email_address] = None
+
+    response = client.get_identity_notification_attributes(
+        Identities=[x for x in recipient_to_ses_identity_map.values() if x is not None])
+    existing_attributes = response['NotificationAttributes']
+
+    processed_identities = []
+    # TODO : What if we exceed the 1 call per second limit to the endpoint that sets these values?
+    for recipient, identity in recipient_to_ses_identity_map.items():
+        if identity in processed_identities:
+            # We've already processed this identity due to another recipient in the same domain, skipping
+            continue
+        processed_identities.append(identity)
+        for attribute in ['Bounce', 'Complaint', 'Delivery']:
+            if identity is None:
+                # Set new SES Notification settings
+                client.set_identity_notification_topic(
+                    Identity=recipient,
+                    NotificationType=attribute,
+                    SnsTopic=config['ses_notification_sns_topic_arn'])
+                green_print(f"New SES Notification for {attribute} notifications for {recipient} set to {config['ses_notification_sns_topic_arn']}")
+            elif f"{attribute}Topic" not in existing_attributes[identity] or existing_attributes[identity][f"{attribute}Topic"] != config['ses_notification_sns_topic_arn']:
+                # Check and update existing SES Notification settings
+                client.set_identity_notification_topic(
+                    Identity=identity,
+                    NotificationType=attribute,
+                    SnsTopic=config['ses_notification_sns_topic_arn'])
+                green_print(
+                    f"Existing SES Notification for {attribute} notifications for {identity} changed from {existing_attributes[identity].get(f'{attribute}Topic', None)} to {config['ses_notification_sns_topic_arn']}")
+
     # Lambda IAM Role
     policies = {
         'LambdaBasicExecution': '''{
@@ -576,7 +659,24 @@ they're complete''')
       "Resource": "*"
     }
   ]
-}'''}
+}''',
+        'AWSLambdaPersistence': '''{
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "dynamodb:CreateTable",
+            "dynamodb:TagResource",
+            "dynamodb:PutItem",
+            "dynamodb:DescribeTable",
+            "dynamodb:GetItem"
+          ],
+          "Resource": "arn:aws:dynamodb:*:*:table/AWSLambdaPersistence"
+        }
+      ]
+}'''
+}
 
     if 'alert_sns_topic_arn' in config:
         policies['SNSPublisher'] = json.dumps(
@@ -673,11 +773,11 @@ they're complete''')
                 function_needs_update = True
             else:
                 # layer zip hasn't changed from a published version
-                layer_version_arn = hash_map[digest]
+                birch_girder_layer_version_arn = hash_map[digest]
                 try:
                     response = client.get_function(
                         FunctionName=args.lambda_function_name)
-                    if layer_version_arn not in [x['Arn'] for x in response['Configuration'].get('Layers', [])]:
+                    if birch_girder_layer_version_arn not in [x['Arn'] for x in response['Configuration'].get('Layers', [])]:
                         # Lambda function doesn't include the layer
                         function_needs_update = True
                 except:
@@ -688,10 +788,10 @@ they're complete''')
                 LayerName=layer_name,
                 Description='Birch Girder supporting python packages',
                 Content={'ZipFile': f.read()},
-                CompatibleRuntimes=['python3.8'])
-            layer_version_arn = response['LayerVersionArn']
-            green_print(f'AWS Lambda layer published : {layer_version_arn}')
-            hash_map[digest] = layer_version_arn
+                CompatibleRuntimes=['python3.9', 'python3.10', 'python3.11', 'python3.12', 'python3.13', 'python3.14'])
+            birch_girder_layer_version_arn = response['LayerVersionArn']
+            green_print(f'AWS Lambda layer published : {birch_girder_layer_version_arn}')
+            hash_map[digest] = birch_girder_layer_version_arn
             with open(hash_version_map_filename, 'w') as hash_map_file:
                 json.dump(hash_map, hash_map_file, indent=4)
             function_needs_update = True
@@ -712,13 +812,16 @@ they're complete''')
             try:
                 response = client.create_function(
                     FunctionName=args.lambda_function_name,
-                    Runtime='python3.8',
+                    Runtime='python3.14',
                     Role=lambda_iam_role_arn,
                     Handler='__init__.lambda_handler',
                     Code={'ZipFile': in_memory_data.getvalue()},
                     Description='Birch Girder',
                     Timeout=30,
-                    Layers=[layer_version_arn]
+                    Layers=[
+                        birch_girder_layer_version_arn,
+                        AWS_LAMBDA_PERSISTENCE_LAYER_ARN
+                    ]
                 )
                 break
             except client.exceptions.InvalidParameterValueException as e:
@@ -747,7 +850,7 @@ they're complete''')
         if function_needs_update:
             response = client.update_function_configuration(
                 FunctionName=args.lambda_function_name,
-                Layers=[layer_version_arn]
+                Layers=[birch_girder_layer_version_arn, AWS_LAMBDA_PERSISTENCE_LAYER_ARN]
             )
             green_print(f"AWS Lambda function configuration updated with new "
                         f"Lambda layer :{response['FunctionArn']}")
@@ -774,10 +877,16 @@ they're complete''')
                 arcname,
                 zipfile.ZIP_DEFLATED)
 
-    response = client.update_function_code(
-        FunctionName=args.lambda_function_name,
-        ZipFile=in_memory_data.getvalue()
-    )
+    while True:
+        try:
+            response = client.update_function_code(
+                FunctionName=args.lambda_function_name,
+                ZipFile=in_memory_data.getvalue()
+            )
+            break
+        except client.exceptions.ResourceConflictException:
+            # The operation cannot be performed at this time. An update is in progress, so we wait
+            sleep(2)
     lambda_function_arn = response['FunctionArn']
     green_print(f'AWS Lambda function updated : {lambda_function_arn}')
 
@@ -827,6 +936,21 @@ they're complete''')
             Action='lambda:InvokeFunction',
             Principal='sns.amazonaws.com',
             SourceArn=config['sns_topic_arn']
+        )
+        green_print(f'Permission {statement_id} added to AWS Lambda function '
+                    f'{args.lambda_function_name}')
+
+    # SNS permission to invoke Lambda function
+    statement_id = 'GiveSESNotificationSNSTopicPermissionToInvokeFunction'
+    if (policy is None
+            or statement_id not in [x['Sid'] for x
+                                    in json.loads(policy)['Statement']]):
+        response = client.add_permission(
+            FunctionName=args.lambda_function_name,
+            StatementId=statement_id,
+            Action='lambda:InvokeFunction',
+            Principal='sns.amazonaws.com',
+            SourceArn=config['ses_notification_sns_topic_arn']
         )
         green_print(f'Permission {statement_id} added to AWS Lambda function '
                     f'{args.lambda_function_name}')
@@ -1001,11 +1125,12 @@ organization so we can't create the repo. Skipping''')
             workflow_config['jobs']['emit_comment']['env']['BIRCH_GIRDER_SNS_TOPIC_REGION'] = config['sns_topic_arn'].split(':')[3]
             workflow_config['jobs']['emit_comment']['env']['BIRCH_GIRDER_SNS_TOPIC_ARN'] = config['sns_topic_arn']
             content = yaml.dump(workflow_config, default_flow_style=False)
+            b64_content = base64.b64encode(content.encode('ascii')).decode('ascii')
             if status == 404:
                 status, _ = gh.repos[owner][repo].contents['.github']['workflows'][args.github_action_filename].put(
                     body={
                         'message': 'Adding Birch Girder GitHub Actions workflow\n\nhttps://github.com/gene1wood/birch-girder',
-                        'content': base64.b64encode(content.encode('ascii'))})
+                        'content': b64_content})
                 if 200 <= status < 300:
                     green_print(f'  New GitHub Actions workflow '
                                 f'{args.github_action_filename} deployed')
@@ -1015,13 +1140,13 @@ organization so we can't create the repo. Skipping''')
                 status, _ = gh.repos[owner][repo].contents['.github']['workflows'][args.github_action_filename].put(
                     body={
                         'message': 'Updating Birch Girder GitHub Actions workflow\n\nhttps://github.com/gene1wood/birch-girder',
-                        'content': base64.b64encode(content.encode('ascii')),
+                        'content': b64_content,
                         'sha': workflow_data['sha']})
                 if 200 <= status < 300:
                     green_print(f'  GitHub Actions workflow '
                                 f'{args.github_action_filename} updated')
                 else:
-                    print(f"result from update {status} and {_}")
+                    print(f"result from update {owner}/{repo}/.github/workflows/{args.github_action_filename} {status} and {_}")
 
     # Subscribe Lambda function to SNS
     client = boto3.client('sns')
@@ -1037,6 +1162,20 @@ organization so we can't create the repo. Skipping''')
         )
         green_print(f"Birch Girder AWS Lambda function subscribed to AWS SNS "
                     f"Topic : {response['SubscriptionArn']}")
+
+    # Subscribe Lambda function to SES Notification SNS Topic
+    subscriptions = get_paginated_results(
+        'sns', 'list_subscriptions_by_topic', 'Subscriptions',
+        args={'TopicArn': config['ses_notification_sns_topic_arn']})
+    if lambda_function_arn not in [x['Endpoint'] for x in subscriptions
+                                   if x['Protocol'] == 'lambda']:
+        response = client.subscribe(
+            TopicArn=config['ses_notification_sns_topic_arn'],
+            Protocol='lambda',
+            Endpoint=lambda_function_arn
+        )
+        green_print(f"Birch Girder AWS Lambda function subscribed to AWS SES "
+                    f"Notification SNS Topic : {response['SubscriptionArn']}")
 
 
 if __name__ == '__main__':

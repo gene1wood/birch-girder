@@ -2,18 +2,24 @@
 
 ## Create the Lambda Layer
 
-### Method 1 : Use docker
+### Method 1 : Use pip and manylinux2014_x86_64
 
-1. Run this command to fetch a docker image of the lambda environment and build
-   the required packages
+1. Run this command to fetch wheels of the dependencies using the 
+   [`manylinux` project](https://github.com/pypa/manylinux)
    ```
-   docker run -v "$PWD":/var/task \
-     "lambci/lambda:build-python3.8" \
-     /bin/sh -c "python -m pip install -r requirements.txt -t python/lib/python3.8/site-packages/; exit"
+   mkdir -p package/python
+   pip install \
+     --platform manylinux2014_x86_64 \
+     --target=package/python \
+     --implementation cp \
+     --python-version 3.14 \
+     --only-binary=:all: --upgrade \
+     botocore boto3 agithub PyYAML python-dateutil email_reply_parser beautifulsoup4
    ```
 2. Zip up the results
    ```
-   zip -r ../birch-girder.zip python
+   cd package
+   zip -r ../artifacts/birch-girder.zip .
    ```
 
 This process is outlined in [this AWS documentation page](https://aws.amazon.com/premiumsupport/knowledge-center/lambda-layer-simulated-docker/).

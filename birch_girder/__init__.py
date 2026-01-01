@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import base64
-import email.utils
+import email
 import glob
 import importlib
 import json
@@ -19,12 +19,12 @@ from string import Template
 
 import boto3  # pip install boto3
 import bs4  # pip install beautifulsoup4
-import pyzmail  # pip install pyzmail36
 import yaml  # pip install PyYAML
 from agithub.GitHub import GitHub  # pypi install agithub
 from dateutil import tz  # sudo pip install python-dateutil
 from email_reply_parser \
     import EmailReplyParser  # pip install email_reply_parser
+from aws_lambda_persistence import PersistentMap
 
 TIME_ZONE = tz.gettz('America/Los_Angeles')
 
@@ -51,7 +51,7 @@ $body
 $attachment_table
 ---
 
-Note : To trigger sending an email comment back to `$from_address` include
+Note : To trigger sending an email comment back to `$reply_to` include
 @$github_username in your comment.
 <!--
 $headers
@@ -161,10 +161,11 @@ logging.getLogger('urllib3').setLevel(logging.CRITICAL)
 logging.getLogger('email_reply_parser').setLevel(logging.CRITICAL)
 
 
-def get_event_type(event):
+def get_event_type(event, config):
     """Determine where an event originated from based on it's contents
 
     :param event: A dictionary of metadata for an event
+    :param config: The config
     :return: Either the name of the source of the event or False if no
     source can be determined
     """
@@ -175,16 +176,14 @@ def get_event_type(event):
             type(event['Records']) == list and
             len(event['Records']) > 0 and
             type(event['Records'][0]) == dict):
-        if ('eventSource' in event['Records'][0]
-                and event['Records'][0]['eventSource'] == 'aws:ses'):
+        if (event['Records'][0].get('Sns', {}).get('TopicArn') == config['ses_notification_sns_topic_arn']):
+            return 'ses_notification'
+        elif (event['Records'][0].get('Sns', {}).get('TopicArn') == config['sns_topic_arn']):
+            return 'github'
+        elif (event['Records'][0].get('eventSource') == 'aws:ses'):
             # SES received email
             # Note the lower case 'eventSource'
-            return 'ses'
-        elif ('EventSource' in event['Records'][0]
-              and event['Records'][0]['EventSource'] == 'aws:sns'):
-            # SNS published message
-            # Note the upper case 'EventSource'
-            return 'sns'
+            return 'ses_email'
     elif 'replay-email' in event:
         return 'replay-email'
     else:
@@ -566,7 +565,7 @@ class Email:
         # lifecycle which automatically deletes old data
 
     def parse_email_payload(self):
-        """Parse a raw mime email into a pyzmail.PyzMessage object.
+        """Parse a raw MIME email using the stdlib email package.
         Write any attachments into the github repo and add a link to those
         files to the new_attachment_urls dict.
 
@@ -575,73 +574,94 @@ class Email:
 
         :return: nothing
         """
-        msg = pyzmail.PyzMessage.factory(self.raw_body)
-        self.timestamp = email.utils.mktime_tz(
-            email.utils.parsedate_tz(msg.get_decoded_header('Date')))
 
-        if msg.text_part is not None:
-            payload, used_charset = pyzmail.decode_text(
-                msg.text_part.get_payload(),
-                msg.text_part.charset,
-                None)
-            self.email_body_text = payload
+        msg = email.message_from_bytes(self.raw_body, policy=email.policy.default)
+
+        # Timestamp
+        if msg['Date']:
+            self.timestamp = int(
+                email.utils.parsedate_to_datetime(msg['Date']).timestamp()
+            )
         else:
-            self.email_body_text = ''
+            self.timestamp = 0
 
-        if msg.html_part is not None:
-            soup = bs4.BeautifulSoup(
-                msg.html_part.get_payload(), 'html.parser')
-            self.email_body = ''.join(
-                str(x) for x in (
-                    soup.body.contents
-                    if soup.body is not None else soup.contents)
-                if not isinstance(x, bs4.Comment))
-        elif msg.text_part is not None:
-            self.email_body = self.email_body_text
-        else:
-            # Didn't find text or html
-            self.email_body = "Unable to parse body from email"
+        self.email_body_text = ''
+        self.email_body = ''
 
-        for mailpart in msg.mailparts:
-            if mailpart.is_body in ['text/plain', 'text/html']:
+        # Walk message parts
+        for part in msg.walk():
+            if part.is_multipart():
                 continue
-            # This mailpart is an attachment
-            # Note: We have to check for specific values of is_body because
-            # pyzmail doesn't set is_body to None as the docs indicate
-            filename = mailpart.sanitized_filename
+
+            content_type = part.get_content_type()
+            disposition = part.get_content_disposition()
+
+            # Plain text body
+            if content_type == 'text/plain' and disposition != 'attachment':
+                self.email_body_text = part.get_content()
+
+            # HTML body
+            elif content_type == 'text/html' and disposition != 'attachment':
+                soup = bs4.BeautifulSoup(part.get_content(), 'html.parser')
+                self.email_body = ''.join(
+                    str(x) for x in (
+                        soup.body.contents
+                        if soup.body is not None else soup.contents
+                    )
+                    if not isinstance(x, bs4.Comment)
+                )
+
+        # Fallbacks
+        if not self.email_body:
+            if self.email_body_text:
+                self.email_body = self.email_body_text
+            else:
+                self.email_body = "Unable to parse body from email"
+
+        # Attachments
+        for part in msg.iter_attachments():
+            filename = part.get_filename()
+            if not filename:
+                continue
+
             storage_filename = f"{self.timestamp}-{filename}"
             logger.info(f'Adding attachment {filename} to repo')
+
             if self.dryrun:
                 self.new_attachment_urls[filename] = 'https://example.com'
                 continue
+
+            content_bytes = part.get_payload(decode=True)
             path = f'attachments/{urllib.parse.quote(storage_filename)}'
+
             status, data = (
                 self.gh.repos[self.github_owner]
                 [self.github_repo].contents[path].put(
                     body={
                         'message': f'Add attachment {filename}',
-                        'content': base64.b64encode(
-                            mailpart.get_payload()).decode('utf-8')
+                        'content': base64.b64encode(content_bytes).decode('utf-8')
                     }
                 )
             )
+
             if int(status / 100) != 2:
-                if status == 422 and '"sha" wasn\'t supplied' in data.get('message',''):
-                    # The file already exists
+                if status == 422 and '"sha" wasn\'t supplied' in data.get('message', ''):
                     status, data = (
                         self.gh.repos[self.github_owner]
                         [self.github_repo].contents[path].get()
                     )
                     logger.info(
-                        'The attempt to add the attachment failed because it '
-                        'already exists. Instead assuming the content is the '
-                        'same, it will just be referenced in this issue')
+                        'Attachment already exists; referencing existing file'
+                    )
                     html_url = data['html_url']
                 else:
-                    logger.error(f'Failed to save attachment {filename} {status} {data}')
+                    logger.error(
+                        f'Failed to save attachment {filename} {status} {data}'
+                    )
                     continue
             else:
                 html_url = data['content']['html_url']
+
             self.new_attachment_urls[filename] = html_url
 
 
@@ -655,6 +675,7 @@ class EventHandler:
         """
         self.config = config
         self.event = event
+        self.event_type = None
         self.context = context
         self.alerter = Alerter(self.config, self.event, self.context)
         self.gh = GitHub(token=self.config['github_token'])
@@ -740,12 +761,14 @@ class EventHandler:
         :return:
         """
         try:
-            event_type = get_event_type(self.event)
-            if event_type == 'ses':
+            self.event_type = get_event_type(self.event, self.config)
+            if self.event_type == 'ses_email':
                 self.incoming_email()
-            elif event_type == 'sns':
+            elif self.event_type == 'github':
                 self.github_hook()
-            elif event_type == 'replay-email':
+            elif self.event_type == 'ses_notification':
+                self.process_ses_notification()
+            elif self.event_type == 'replay-email':
                 self.fetch_replay(self.event['replay-email'])
                 self.incoming_email()
             else:
@@ -789,7 +812,7 @@ class EventHandler:
             to_address=parsed_email.to_address,
             date=parsed_email.date,
             headers=json.dumps(
-                parsed_email.record['ses']['mail']['headers']),
+                parsed_email.record['ses']['mail']['headers'], indent=4),
             body=parsed_email.stripped_reply,
             comment_attachments=comment_attachments)
         logger.info(
@@ -879,25 +902,16 @@ to add to your request.''')
             text=EMAIL_TEXT_TEMPLATE.substitute(
                 text_body=body.format(text_url),
                 **template_args))
-
-        # Add a reaction to the issue indicating the sender has been
-        # replied to
-        repo = (
-            self.gh.repos[parsed_email.github_owner][parsed_email.github_repo])
-        issue = repo.issues[issue_data['number']]
-        status, reaction_data = issue.reactions.post(
-            body={'content': 'rocket'},
-            headers={
-                'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
-        if int(status / 100) == 2:
-            logger.info(
-                f"Just added a reaction to issue "
-                f"#{issue_data['number']} after sending an email")
-        else:
-            logger.error(
-                f"Unable to add reaction to issue "
-                f"#{issue_data['number']} after {status} : "
-                f"{reaction_data}")
+        if 'sent_mail' not in persistent_data:
+            persistent_data['sent_mail'] = dict()
+        persistent_data['sent_mail'][message_id] = {
+            'repo_owner': parsed_email.github_owner,
+            'repo_name': parsed_email.github_repo,
+            'issue_number': issue_data['number'],
+            'datetime': datetime.now()
+        }
+        logger.debug(f"Stored sent email to reporter in persistent data for message_id {message_id}")
+        logger.debug(f"persistent_data['sent_mail'] is {persistent_data['sent_mail']}")
         return message_id
 
     def create_issue(self, repo, parsed_email):
@@ -921,6 +935,8 @@ to add to your request.''')
             'date': parsed_email.date,
             'message_id': parsed_email.message_id
         }
+        if parsed_email.replyto != '':
+            email_metadata['reply_to'] = parsed_email.replyto
 
         if len(parsed_email.new_attachment_urls) > 0:
             email_metadata['attachments'] = parsed_email.new_attachment_urls
@@ -930,6 +946,8 @@ to add to your request.''')
                 'hidden_content',
                 yaml.safe_dump(email_metadata, default_flow_style=False)),
             from_address=parsed_email.from_address,
+            reply_to=(parsed_email.from_address if parsed_email.replyto == ''
+                      else parsed_email.replyto),
             to_address=parsed_email.to_address,
             date=parsed_email.date,
             github_username=self.config['github_username'],
@@ -1041,11 +1059,16 @@ to add to your request.''')
             self.add_comment_to_issue(issue, parsed_email)
         else:
             issue_data = self.create_issue(repo, parsed_email)
+            logger.debug('RT env %s and self.event %s' % (os.getenv(
+                'SEND_REPLAY_EMAIL', 'True').lower(), self.event_type))
+            if self.event_type == 'replay-email' and os.getenv(
+                    'SEND_REPLAY_EMAIL', 'True').lower() == 'false':
+                logger.debug('Skipping sending email reply for this replay')
+                return
             message_id = self.send_email_to_reporter(parsed_email, issue_data)
             if message_id is not None:
                 logger.debug(
-                    f'Initial email reply sent to {parsed_email.from_address} '
-                    f'with Message-ID {message_id}')
+                    f'Initial email reply sent with Message-ID {message_id}')
 
     def github_hook(self):
         """Process new GitHub issue comments.
@@ -1081,6 +1104,10 @@ to add to your request.''')
         mention = f"@{self.config['github_username']}"
         mention_regex = r'\B%s\b' % mention
 
+        if message.get('notificationType') == 'AmazonSnsSubscriptionSucceeded':
+            logger.debug(f'Ignoring AmazonSnsSubscriptionSucceeded event : '
+                         f'{self.event['Records'][0]['Sns']['Message']}')
+            return False
         if 'comment' not in message or 'issue' not in message:
             logger.debug('Non IssueCommentEvent webhook event received : %s'
                          % self.event['Records'][0]['Sns']['Message'])
@@ -1163,7 +1190,7 @@ to add to your request.''')
 
         if self.dryrun_tag in message['comment']['body']:
             logger.info(f"Running in dryrun mode. No email notification for "
-                        f"{data['from']} sent")
+                        f"{data['reply_to'] if 'reply_to' in data else data['from']} sent")
             return
         logger.info(
             f"Sending an email notification to {data['from']} with the "
@@ -1173,7 +1200,7 @@ to add to your request.''')
             from_name=self.config['recipient_list'][data['to']].get(
                 'name'),
             from_address=data['to'],
-            to_address=data['from'],
+            to_address=data['reply_to'] if 'reply_to' in data else data['from'],
             in_reply_to=data['message_id'],
             references=data['message_id'],
             html=EMAIL_HTML_TEMPLATE.substitute(
@@ -1184,21 +1211,114 @@ to add to your request.''')
                 text_body=text_email_body,
                 issue_reference=issue_reference,
                 provider=self.config['provider_name']))
+        if 'sent_mail' not in persistent_data:
+            persistent_data['sent_mail'] = dict()
+        persistent_data['sent_mail'][message_id] = {
+            'repo_owner': message['repository']['owner']['login'],
+            'repo_name': message['repository']['name'],
+            'comment_id': message['comment']['id'],
+            'datetime': datetime.now()
+        }
+        logger.debug(f"Stored sent email in response to GitHub event in persistent data for message_id {message_id}")
+        logger.debug(f"persistent_data['sent_mail'] is {persistent_data['sent_mail']}")
 
         self.update_issue(
             message['issue']['body'],
             message_id,
             {})
 
-        # Add a reaction to the comment indicating it's been emailed out
-        comment = (self.gh.repos[message['repository']['full_name']].
-                   issues.comments[message['comment']['id']])
-        status, reaction_data = comment.reactions.post(
-            body={'content': 'rocket'},
+
+    def process_ses_notification(self):
+        """Lookup the associated GitHub issue or comment and add a reaction
+
+        Bounce : Create a `-1` reaction to issue or comment
+        Complaint : Create a `confused` reaction to issue or comment
+        Delivery : Create a `rocket` reaction to issue or comment
+
+        This requires persisting information about the sent email in
+        aws-lambda-persistence which we use via a Lamda Layer. When an email
+        is sent, we store a record of it. Later when AWS SES emits an
+        event to SNS, reporting the disposition of that sent email, we can
+        map it back to the email that was sent and add the reaction to the
+        correct issue or comment. This is all keyed off of the email's
+        message-id.
+
+        :return:
+        """
+        if len(self.event['Records']) > 1:
+            raise Exception(
+                f"Multiple records from SES {self.event['Records']}")
+
+        ses_notification = json.loads(self.event['Records'][0]['Sns']['Message'])
+
+        if ses_notification['notificationType'] == 'Bounce':
+            reaction_content = '-1'
+        elif ses_notification['notificationType'] == 'Complaint':
+            reaction_content = 'confused'
+        elif ses_notification['notificationType'] == 'Delivery':
+            reaction_content = 'rocket'
+        else:
+            raise Exception(f"Unexpected AWS SES notificationType of #{ses_notification['notificationType']} in event")
+
+        message_id = ses_notification['mail']['messageId']
+        # Note : We don't want self.event['Records'][0]['Sns']['MessageId'] as this is the outer message ID which we're not using
+        if message_id in persistent_data['sent_mail']:
+            # The SES notification received maps to an email that we previously sent
+            issue_or_comment = persistent_data['sent_mail'][message_id]
+            if 'comment_id' in issue_or_comment:
+                # The email was sent in response to a comment
+                reaction_target = (self.gh.repos[issue_or_comment['repo_owner']][issue_or_comment['repo_name']].
+                   issues.comments[issue_or_comment['comment_id']])
+                logger.info(
+                    f"Adding reaction {reaction_content} to comment {issue_or_comment['comment_id']} in repo {issue_or_comment['repo_owner']}/{issue_or_comment['repo_name']} due to SES notification")
+
+            elif 'issue_number' in issue_or_comment:
+                # The email was sent in response to the creation of an issue
+                repo = (
+                    self.gh.repos[issue_or_comment['repo_owner']][issue_or_comment['repo_name']])
+                reaction_target = repo.issues[issue_or_comment['issue_number']]
+                logger.info(
+                    f"Adding reaction {reaction_content} to issue {issue_or_comment['issue_number']} in repo {issue_or_comment['repo_owner']}/{issue_or_comment['repo_name']} due to SES notification")
+            else:
+                raise Exception(
+                    f"The information stored in the PersistentMap['sent_mail'] for message "
+                    f"#{message_id} appears malformed. It contains #{issue_or_comment}")
+        else:
+            # This is an SES notification about a messageId we haven't seen before
+            raise Exception(
+                f"An SES notification was received with message_id {message_id} which doesn't map to an email "
+                f"that we've seen before. persistent_data is {persistent_data} and the event is {self.event}")
+
+
+        status, reaction_data = reaction_target.reactions.post(
+            body={'content': reaction_content},
             headers={
-                'Accept': 'application/vnd.github.squirrel-girl-preview+json'})
-        logger.info(f"Just added a reaction to a comment in issue "
-                    f"#{message['comment']['id']} after sending an email")
+                'Accept': 'application/vnd.github+json'})
+        del persistent_data['sent_mail'][message_id]
+        if ses_notification['notificationType'] in ['Bounce', 'Complaint']:
+            # Add details about the failure in a hidden section of the issue or comment
+            reaction_details = (
+                f"\n<!--\nSES Event when the email of this issue/comment was sent :\n"
+                f"{json.dumps(self.event, indent=4)}\n-->")
+            if 'comment_id' in issue_or_comment:
+                comment = (self.gh.repos[issue_or_comment['repo_owner']][issue_or_comment['repo_name']].issues.
+                    comments[issue_or_comment['comment_id']])
+                status, comment_update_result = (
+                    self.gh.repos[issue_or_comment['repo_owner']][issue_or_comment['repo_name']].issues.
+                    comments[issue_or_comment['comment_id']].patch(body={'body': comment['body'] + reaction_details}, headers={
+                'Accept': 'application/vnd.github+json'}))
+            elif 'issue_number' in issue_or_comment:
+                status, issue = (self.gh.repos[issue_or_comment['repo_owner']][issue_or_comment['repo_name']].issues.
+                    issue_or_comment['issue_number'])
+                status, issue_update_result = (
+                    self.gh.repos[issue_or_comment['repo_owner']][issue_or_comment['repo_name']].issues.
+                    issue_or_comment['issue_number'].patch(
+                        body={'body': issue['body'] + reaction_details}, headers={
+                'Accept': 'application/vnd.github+json'}))
+            else:
+                raise Exception(
+                    f"The information stored in the PersistentMap['sent_mail'] for message "
+                    f"#{message_id} appears malformed. It contains #{issue_or_comment}")
 
 
 def lambda_handler(event, context):
@@ -1212,6 +1332,13 @@ def lambda_handler(event, context):
     # logger.debug(f'got event {event}')
     with open('config.yaml') as f:
         config = yaml.load(f.read(), Loader=yaml.SafeLoader)
+    global persistent_data
+    if 'persistent_data' not in globals():
+        # data isn't present in Lambda cache already
+        persistent_data = PersistentMap()  # aws-lambda-persistence
+        logger.debug(f"persistent_data isn't in Lambda cache, fetching from DynamoDB")
+        logger.debug(f"persistent_data is {persistent_data}")
+
     handler = EventHandler(config, event, context)
     handler.process_event()
 
