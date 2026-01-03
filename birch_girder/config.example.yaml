@@ -1,5 +1,10 @@
 ---
-# The ARN of the AWS Topic that GitHub publishes comments to
+
+# The SNS Topic name that GitHub publishes comments to. This is only used by
+# deploy.py to create the Topic, it's not used by birch girder.
+sns_topic: GithubWebhookTopic
+# The ARN of the AWS Topic that GitHub publishes comments to. This is set by
+# deploy.py when the Topic is created
 sns_topic_arn: arn:aws:sns:us-west-2:123456789012:GithubWebhookTopic
 # The AWS region in which the SNS Topic is hosted
 sns_region: us-west-2
@@ -11,6 +16,12 @@ github_username: octocat
 ses_payload_s3_bucket_name: birch-girder-example-corporation
 # The directory in the S3 bucket to store email in
 ses_payload_s3_prefix: ses-payloads/
+# The SNS Topic to use for conveying notifications from SES to Birch Girder
+# about the outcome of sent email
+ses_notification_sns_topic: BirchGirderSESNotificationTopic
+# The ARN of the ses_notification_sns_topic SNS Topic. This value is set by
+# deploy.py when the Topic is created
+ses_notification_sns_topic_arn: arn:aws:sns:us-east-1:123456789012:BirchGirderSESNotificationTopic
 # An optional SNS Topic that Birch Girder publishes to in the event of a bug
 alert_sns_topic_arn: arn:aws:sns:us-west-2:123456789012:BirchGirderAlerts
 # The region of the alert SNS topic
@@ -30,6 +41,16 @@ allow_issue_merging_by_subject: True
 # reply because they are other companies ticketing systems, not a person
 known_machine_senders:
   - noreply@example.net
+# A list of additional GitHub usernames, beyond github_username, which were used
+# in the past by birch girder. This accomodates cases where over time you've
+# changed which GitHub user birch girder operates as but you want to ensure that
+# historical GitHub issues still work with birch girder using the old usernames.
+historical_github_usernames: []
+# The AWS IAM key ID and secret stored in GitHub Actions Secrets which enables
+# the GitHub repo to publish to the SNS Topic. These values are only used by
+# deploy.py not by birch_girder
+github_iam_user_access_key_id: AKIAIOSFODNN7EXAMPLE
+github_iam_user_secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 # A map of email addresses that you would like to receive email at
 recipient_list:
   # The email address
