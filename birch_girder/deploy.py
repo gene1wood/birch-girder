@@ -764,13 +764,13 @@ they're complete''')
         if layer_name not in [x['LayerName'] for x in layers]:
             # Create a new Lambda layer
             publish_layer = True
-            function_needs_update = True
+            function_needs_update = "there is a missing layer"
         else:
             function_needs_update = False
             if digest not in hash_map:
                 # layer zip has changed and should be published
                 publish_layer = True
-                function_needs_update = True
+                function_needs_update = "there is a layer update"
             else:
                 # layer zip hasn't changed from a published version
                 birch_girder_layer_version_arn = hash_map[digest]
@@ -779,7 +779,7 @@ they're complete''')
                         FunctionName=args.lambda_function_name)
                     if birch_girder_layer_version_arn not in [x['Arn'] for x in response['Configuration'].get('Layers', [])]:
                         # Lambda function doesn't include the layer
-                        function_needs_update = True
+                        function_needs_update = "there is a new layer being added to the function"
                 except:
                     # There is no lambda function
                     pass
@@ -794,7 +794,6 @@ they're complete''')
             hash_map[digest] = birch_girder_layer_version_arn
             with open(hash_version_map_filename, 'w') as hash_map_file:
                 json.dump(hash_map, hash_map_file, indent=4)
-            function_needs_update = True
 
 
     # Lambda function
@@ -814,7 +813,7 @@ they're complete''')
                     FunctionName=args.lambda_function_name,
                     Runtime='python3.14',
                     Role=lambda_iam_role_arn,
-                    Handler='__init__.lambda_handler',
+                    Handler='birch_girder.__init__.lambda_handler',
                     Code={'ZipFile': in_memory_data.getvalue()},
                     Description='Birch Girder',
                     Timeout=30,
@@ -853,7 +852,7 @@ they're complete''')
                 Layers=[birch_girder_layer_version_arn, AWS_LAMBDA_PERSISTENCE_LAYER_ARN]
             )
             green_print(f"AWS Lambda function configuration updated with new "
-                        f"Lambda layer :{response['FunctionArn']}")
+                        f"Lambda layer because {function_needs_update} :{response['FunctionArn']}")
         pass
 
     in_memory_data = io.BytesIO()
@@ -864,13 +863,16 @@ they're complete''')
         config_file.external_attr = 0o644 << 16
         zip_file.writestr(config_file, open(args.config).read())
 
-        zip_file.write(
-            init_filename,
-            '__init__.py',
-            zipfile.ZIP_DEFLATED)
+        excluded_files = ['deploy.py', 'config.example.yaml']
+        for filename in [x for x in os.listdir('birch_girder') if x not in excluded_files]:
+            arcname = os.path.join('birch_girder', filename)
+            zip_file.write(
+                arcname,
+                arcname,
+                zipfile.ZIP_DEFLATED)
 
-        for filename in os.listdir(args.plugins_path):
-            arcname = os.path.join('plugins', filename)
+        for filename in [x for x in os.listdir(args.plugins_path) if x.endswith('.py')]:
+            arcname = os.path.join('birch_girder', 'plugins', filename)
             full_path = os.path.join(args.plugins_path, filename)
             zip_file.write(
                 full_path,
@@ -886,7 +888,7 @@ they're complete''')
             break
         except client.exceptions.ResourceConflictException:
             # The operation cannot be performed at this time. An update is in progress, so we wait
-            sleep(2)
+            time.sleep(2)
     lambda_function_arn = response['FunctionArn']
     green_print(f'AWS Lambda function updated : {lambda_function_arn}')
 
