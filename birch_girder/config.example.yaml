@@ -45,7 +45,7 @@ known_machine_senders:
 # in the past by birch girder. This accomodates cases where over time you've
 # changed which GitHub user birch girder operates as but you want to ensure that
 # historical GitHub issues still work with birch girder using the old usernames.
-historical_github_usernames: []
+historical_github_usernames: [ ]
 # The AWS IAM key ID and secret stored in GitHub Actions Secrets which enables
 # the GitHub repo to publish to the SNS Topic. These values are only used by
 # deploy.py not by birch_girder
