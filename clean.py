@@ -2,12 +2,11 @@
 # -*- coding: utf-8 -*-
 
 import argparse
-import collections
+import collections.abc
 import json
 
 from agithub.GitHub import GitHub  # pip install agithub
 from botocore.exceptions import ClientError
-import agithub.base
 import boto3
 import yaml
 
@@ -15,7 +14,7 @@ END_COLOR = "\033[0m"
 GREEN_COLOR = "\033[92m"
 
 
-class Config(collections.MutableMapping):
+class Config(collections.abc.MutableMapping):
     def __init__(self, filename, *args, **kwargs):
         self.filename = filename
         self.store = dict()
@@ -46,33 +45,9 @@ class Config(collections.MutableMapping):
     def load(self):
         try:
             with open(self.filename) as f:
-                self.update(**yaml.load(f.read()))
+                self.update(**yaml.load(f.read(), Loader=yaml.SafeLoader))
         except Exception:
             pass
-
-
-class HookIOClient(agithub.base.Client):
-    # Remove the 'delete' method as it conflicts with a hook.io path that
-    # contains 'delete'
-    http_methods = (
-        "head",
-        "get",
-        "post",
-        "put",
-        "patch",
-    )
-
-
-class HookIO(agithub.base.API):
-    def __init__(self, api_key=None, *args, **kwargs):
-        extra_headers = dict()
-        if api_key is not None:
-            extra_headers["hookio-private-key"] = api_key
-        props = agithub.base.ConnectionProperties(
-            api_url="hook.io", secure_http=True, extra_headers=extra_headers
-        )
-        self.setClient(HookIOClient(*args, **kwargs))
-        self.setConnectionProperties(props)
 
 
 def green_print(data):
@@ -88,33 +63,6 @@ def get_paginated_results(product, action, key, args=None):
         ]
         for y in sublist
     ]
-
-
-def update_hookio_env_vars(hook_io, new_env_vars, current_env_vars=None):
-    if current_env_vars is None:
-        status, current_env_vars = hook_io.env.get()
-
-    data = dict(current_env_vars)
-    for k, v in new_env_vars.items():
-        data[k] = v
-
-    created_vars = set(data.keys()) - set(current_env_vars.keys())
-    updated_vars = [x for x in new_env_vars.keys() if new_env_vars[x] != data.get(x)]
-    deleted_vars = [k for k, v in new_env_vars.items() if v is None]
-
-    if created_vars or updated_vars or deleted_vars:
-        status, result = hook_io.env.post(body={"env": data})
-        if status != 200 or result.get("status") != "updated":
-            print(f"Got error {result} when attempting to set hook.io env vars")
-        else:
-            message = ""
-            if created_vars:
-                message += f"Created {created_vars} "
-            if updated_vars:
-                message += f"Updated {updated_vars} "
-            if deleted_vars:
-                message += f"Deleted {deleted_vars}"
-            green_print(f"hook.io env variables changed : {message}")
 
 
 def clean(config, args):
@@ -156,23 +104,9 @@ def clean(config, args):
                 f" {subscription_arn}"
             )
 
-    hook_io = HookIO(api_key=config["hook_io_api_key"])
-    status, hook_io_user = hook_io.keys.checkAccess.get(
-        hook_private_key=config["hook_io_api_key"]
-    )
-    if not hook_io_user["hasAccess"]:
-        print("""
-Your hook.io API key isn't valid. Make sure the key was set up correctly.""")
-        exit(1)
-    hook_url = "/".join(
-        ["https://hook.io", hook_io_user["user"]["name"], args.hookio_service_name]
-    )
-
     client_iam = boto3.client("iam")
     # For each recipient
     #    Leave the created GitHub repo in place
-    #    Delete GitHub webhook
-    #    Delete hook.io env var GitHub webhook secret
     for recipient in config["recipient_list"]:
         owner_name = config["recipient_list"][recipient]["owner"]
         repo_name = config["recipient_list"][recipient]["repo"]
@@ -189,76 +123,18 @@ Your hook.io API key isn't valid. Make sure the key was set up correctly.""")
         if repo_data.get("name") is None:
             print(f"  Leaving GitHub repo {repo_data['name']} in place")
 
-        # Delete GitHub webhook
-        repo_hooks = repo.hooks
-        status, hooks_data = repo_hooks.get()
-        hook_data = next(
-            (
-                x
-                for x in hooks_data
-                if x["name"] == "web" and x["config"].get("url") == hook_url
-            ),
-            None,
-        )
-        if hook_data is not None:
-            status, hook_delete_result = repo_hooks[hook_data["id"]].delete()
-            if status == 204:
-                green_print(
-                    f"  GitHub webhook {hook_data['id']} deleted from repo"
-                    f" {repo_data['html_url']}"
-                )
-            else:
-                raise Exception(f"GitHub webhook deletion failed {hook_delete_result}")
-
-        # Delete hook.io env var github-webhook-secret-map entry
-        status, env_vars = hook_io.env.get()
-        repo_secret_map = env_vars.get("github-webhook-secret-map", {})
-        if type(repo_secret_map) is not dict:
-            repo_secret_map = json.loads(repo_secret_map)
-        owner_repo_key = "/".join([owner_name, repo_name])
-        if owner_repo_key in repo_secret_map:
-            del repo_secret_map[owner_repo_key]
-            update_hookio_env_vars(
-                hook_io, {"github-webhook-secret-map": repo_secret_map}, env_vars
-            )
-
     # Delete IAM user api key
-    status, env_vars = hook_io.env.get()
     try:
         client_iam.delete_access_key(
             UserName=args.github_iam_username,
-            AccessKeyId=env_vars.get("aws-access-key-id"),
+            AccessKeyId=config['github_iam_user_access_key_id'],
         )
         green_print(
-            f"Access key {env_vars.get('aws-access-key-id')} deleted from AWS IAM user"
+            f"Access key {config['github_iam_user_access_key_id']} deleted from AWS IAM user"
             f" {args.github_iam_username}"
         )
     except Exception:
         pass
-
-    # Delete hook.io env_var AWS API keys
-    if "aws-access-key-id" in env_vars:
-        update_hookio_env_vars(
-            hook_io, {"aws-access-key-id": None, "aws-secret-access-key": None}
-        )
-
-    # Delete hook.io env_var AWS API keys
-    if "sns-topic-arn" in env_vars:
-        update_hookio_env_vars(hook_io, {"sns-topic-arn": None})
-
-    # Delete hook.io service
-    status, hook_io_services = hook_io[hook_io_user["user"]["name"]].post(
-        body={"query": {"owner": hook_io_user["user"]["name"]}}
-    )
-
-    if args.hookio_service_name in [x["name"] for x in hook_io_services]:
-        status, destroy_result = hook_io[hook_io_user["user"]["name"]][
-            args.hookio_service_name
-        ].delete.post(body={})
-        green_print(
-            "Deleted hook.io service"
-            f" {hook_io_user['user']['name']}/{args.hookio_service_name}"
-        )
 
     # Delete GitHub IAM user with inline policy
     try:
@@ -472,11 +348,6 @@ def main():
         "--lambda-function-name",
         default="birch-girder",
         help="Name of the AWS Lambda function (default: birch-girder)",
-    )
-    parser.add_argument(
-        "--hookio-service-name",
-        default="birch-girder-webhook",
-        help="Name of the hook.io service (default: birch-girder-webhook)",
     )
     parser.add_argument(
         "--github-iam-username",
