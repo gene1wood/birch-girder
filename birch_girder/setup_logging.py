@@ -1,18 +1,21 @@
-from datetime import datetime
-import os
-import logging
-from dateutil import tz  # sudo pip install python-dateutil
-import boto3
-import json
 import contextvars
-from typing import Any, Dict
+import json
+import logging
+import os
+from datetime import datetime
+from typing import Any
+
+import boto3
+from dateutil import tz  # sudo pip install python-dateutil
 
 _lambda_event = contextvars.ContextVar("lambda_event", default=None)
 _lambda_context = contextvars.ContextVar("lambda_context", default=None)
 
-TIME_ZONE = tz.gettz('America/Los_Angeles')
+TIME_ZONE = tz.gettz("America/Los_Angeles")
 
 _old_factory = logging.getLogRecordFactory()
+_logging_configured = False
+
 
 def record_factory(*args, **kwargs) -> logging.LogRecord:
     record = _old_factory(*args, **kwargs)
@@ -21,14 +24,22 @@ def record_factory(*args, **kwargs) -> logging.LogRecord:
     context = _lambda_context.get()
 
     record.lambda_event = json.dumps(event, indent=4, default=str)
-    record.lambda_context = json.dumps({
-        "function_name": getattr(context, "function_name", None),
-        "function_version": getattr(context, "function_version", None),
-        "aws_request_id": getattr(context, "aws_request_id", None),
-        "invoked_function_arn": getattr(context, "invoked_function_arn", None),
-        "log_group_name": getattr(context, "log_group_name", None),
-        "log_stream_name": getattr(context, "log_stream_name", None),
-    }, indent=4, default=str) if context else None
+    record.lambda_context = (
+        json.dumps(
+            {
+                "function_name": getattr(context, "function_name", None),
+                "function_version": getattr(context, "function_version", None),
+                "aws_request_id": getattr(context, "aws_request_id", None),
+                "invoked_function_arn": getattr(context, "invoked_function_arn", None),
+                "log_group_name": getattr(context, "log_group_name", None),
+                "log_stream_name": getattr(context, "log_stream_name", None),
+            },
+            indent=4,
+            default=str,
+        )
+        if context
+        else None
+    )
     return record
 
 
@@ -36,9 +47,10 @@ class SNSCriticalHandler(logging.Handler):
     """
     Emits CRITICAL log records to SNS.
     """
+
     def __init__(self, topic_arn: str) -> None:
         super().__init__(level=logging.CRITICAL)
-        self._sns = boto3.client("sns", region_name=topic_arn.split(':')[3])
+        self._sns = boto3.client("sns", region_name=topic_arn.split(":")[3])
         self._topic_arn = topic_arn
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -53,9 +65,6 @@ class SNSCriticalHandler(logging.Handler):
             # Never allow logging failures to crash the app
             self.handleError(record)
 
-_logging_configured = False
-
-
 
 def logging_local_time_converter(secs):
     """Convert a UTC epoch time to a local timezone time for use as a logging
@@ -64,7 +73,7 @@ def logging_local_time_converter(secs):
     :param secs: Time expressed in seconds since the epoch
     :return: a time.struct_time 8-tuple
     """
-    from_zone = tz.gettz('UTC')
+    from_zone = tz.gettz("UTC")
     to_zone = TIME_ZONE
     utc = datetime.fromtimestamp(secs)
     utc = utc.replace(tzinfo=from_zone)
@@ -84,33 +93,32 @@ def setup_logging(sns_topic_arn: str) -> None:
     logging.setLogRecordFactory(record_factory)
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
+    root_logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 
     # Disable boto logging
-    logging.getLogger('boto3').setLevel(logging.CRITICAL)
-    logging.getLogger('botocore').setLevel(logging.CRITICAL)
-    logging.getLogger('s3transfer').setLevel(logging.CRITICAL)
-    logging.getLogger('requests').setLevel(logging.CRITICAL)
-    logging.getLogger('urllib3').setLevel(logging.CRITICAL)
-    logging.getLogger('email_reply_parser').setLevel(logging.CRITICAL)
+    logging.getLogger("boto3").setLevel(logging.CRITICAL)
+    logging.getLogger("botocore").setLevel(logging.CRITICAL)
+    logging.getLogger("s3transfer").setLevel(logging.CRITICAL)
+    logging.getLogger("requests").setLevel(logging.CRITICAL)
+    logging.getLogger("urllib3").setLevel(logging.CRITICAL)
+    logging.getLogger("email_reply_parser").setLevel(logging.CRITICAL)
 
     # Reconfigure default Lambda handler
     for handler in root_logger.handlers:
         # fmt = "[%(levelname)s]   %(asctime)s.%(msecs)dZ  %(aws_request_id)s  %(message)s"
         fmt = "[%(levelname)s] %(asctime)s %(message)s\n"
-        # Maybe we don't need the time in the message since AWS knows the time for each log line anyway
+        # Maybe we don't need the time in the message since AWS knows the time
+        # for each log line anyway
         fmt = "[%(levelname)s] %(message)s\n"
         # datefmt = "%Y-%m-%dT%H:%M:%S"
         datefmt = f"%m/%d/%Y %H:%M:%S {TIME_ZONE.tzname(datetime.now())}"
 
         if not isinstance(handler, SNSCriticalHandler):
-            handler.setFormatter(
-                logging.Formatter(fmt=fmt, datefmt=datefmt)
-            )
+            handler.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
 
     # ---- SNS handler (CRITICAL only) ----
     sns_handler = SNSCriticalHandler(sns_topic_arn)
-    sns_format = '''%(message)s
+    sns_format = """%(message)s
 
 # Event
 
@@ -128,12 +136,10 @@ def setup_logging(sns_topic_arn: str) -> None:
     "function": "%(funcName)s",
     "line": "%(lineno)d",
 }
-'''
+"""
     sns_handler.setFormatter(logging.Formatter(sns_format))
 
     root_logger.addHandler(sns_handler)
-
-
 
     _logging_configured = True
 
@@ -168,4 +174,3 @@ def dump_loggers():
             f"{logging.getLevelName(logger.getEffectiveLevel()):10} "
             f"{logger.propagate}"
         )
-

@@ -5,3 +5,4 @@ PyYAML
 python-dateutil
 email_reply_parser
 beautifulsoup4
+aws-lambda-persistence

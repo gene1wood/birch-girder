@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "birch-girder"
+version = "1.3.0"
+description = "An Email Interface for GitHub Issues"
+readme = "README.md"
+license = "GPL-3.0"
+authors = [
+    { name = "Gene Wood", email = "gene_wood@cementhorizon.com" },
+]
+keywords = [
+    "aws",
+    "github",
+    "issue",
+    "lambda",
+    "ses",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Bug Tracking",
+]
+dependencies = [
+    "agithub",
+    "aws-lambda-persistence",
+    "beautifulsoup4",
+    "boto3",
+    "botocore>1.8.8",
+    "email_reply_parser",
+    "python-dateutil",
+    "PyYAML",
+]
+
+[project.optional-dependencies]
+deploy = [
+    "agithub",
+    "aws-lambda-persistence",
+    "boto3",
+    "pynacl",
+    "PyYAML",
+]
+
+[project.scripts]
+deploy-birch-girder = "birch_girder.deploy:main"
+
+[project.urls]
+Homepage = "https://github.com/gene1wood/birch-girder"
+"Bug Reports" = "https://github.com/mozilla/birch-girder/issues"
+"Say Thanks!" = "https://saythanks.io/to/gene1wood"
+"Source" = "https://github.com/mozilla/birch-girder"
+
+[tool.black]
+preview = true
+unstable = true

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -17,8 +18,10 @@ def is_matching_email(email):
     plugin_enabled = False
     if not plugin_enabled:
         return False
-    if (email.source == 'john@example.net'
-            and email.raw_subject == 'All mimsy were the borogoves'):
+    if (
+        email.source == "john@example.net"
+        and email.raw_subject == "All mimsy were the borogoves"
+    ):
         return True
     else:
         return False

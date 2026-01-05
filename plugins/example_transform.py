@@ -15,9 +15,11 @@ def is_matching_email(email):
     plugin_enabled = False
     if not plugin_enabled:
         return False
-    if (email.source == 'john@example.net' or
-            'BANANA CREAM PIE' in email.raw_subject or
-            email.timestamp < 315532800):
+    if (
+        email.source == "john@example.net"
+        or "BANANA CREAM PIE" in email.raw_subject
+        or email.timestamp < 315532800
+    ):
         return True
     else:
         return False
@@ -30,6 +32,6 @@ def transform_email(email):
     :param email: Parsed email object of type Email
     :return:
     """
-    email.raw_subject += ' TESTING'
-    logging.debug('Subject has been appended with TESTING')
+    email.raw_subject += " TESTING"
+    logging.debug("Subject has been appended with TESTING")
     email.parse_email()
